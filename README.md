@@ -1,2 +1,2 @@
-# receptor-http
-Receptor HTTP Worker Plugin
+# receptor-satellite
+Receptor Satellite Worker Plugin

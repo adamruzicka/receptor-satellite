@@ -9,10 +9,10 @@ with open('README.md', 'r') as f:
     long_description = f.read()
 
 setup(
-    name="receptor-http",
+    name="receptor-satellite",
     version="1.0.0",
     author='Red Hat Ansible',
-    url="https://github.com/project-receptor/receptor-http",
+    url="https://github.com/adamruzicka/receptor-satellite",
     license='Apache',
     packages=find_packages(),
     long_description=long_description,
@@ -22,7 +22,7 @@ setup(
     ],
     zip_safe=False,
     entry_points={
-        'receptor.worker': 'receptor_http = receptor_http.worker',
+        'receptor.worker': 'receptor_satellite = receptor_satellite.worker',
     },
     classifiers=[
         "Programming Language :: Python :: 3",
