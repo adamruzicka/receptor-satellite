@@ -150,9 +150,9 @@ class Run:
         self.job_invocation_id = response['id']
         self.update_hosts(response['targeting']['hosts'])
         await self.queue.ack(self.playbook_run_id)
-        for coroutine in [host.polling_loop() for host in self.hosts]:
-            await coroutine
+        await asyncio.gather(*[host.polling_loop() for host in self.hosts])
         self.queue.done = True
+        print("MARKED QUEUE AS DONE")
 
 
     def update_hosts(self, hosts):
@@ -160,7 +160,7 @@ class Run:
         for host in self.hosts:
             if host.name in hosts:
                 host.id = hosts[host.name]
-            # TODO: In theory Satellite may not know the request host
+            # TODO: In theory Satellite may not know the requested host
 
 
 def execute(message):
