@@ -7,6 +7,7 @@ SATELLITE_HOST = 'localhost:3000'
 
 
 class SatelliteAPI:
+    @staticmethod
     async def trigger(queue, inputs, hosts):
         payload = {
             "job_invocation": {
@@ -26,6 +27,7 @@ class SatelliteAPI:
         return json.loads(response['body'])
 
 
+    @staticmethod
     async def output(queue, host):
         url = 'http://{}/api/v2/job_invocations/{}/hosts/{}'.format(SATELLITE_HOST, host.run.job_invocation_id, host.id)
         # TODO: Handle auth
@@ -94,8 +96,9 @@ class Config:
         self.text_update_full = text_update_full
 
 
-    def from_raw(raw = {}):
-        return Config(raw['text_updates'], raw['text_update_interval'], raw['text_update_full'])
+    @classmethod
+    def from_raw(cls, raw = {}):
+        return cls(raw['text_updates'], raw['text_update_interval'], raw['text_update_full'])
 
 
 class Host:
@@ -132,8 +135,9 @@ class Run:
         self.config = Config.from_raw(config)
 
 
-    def from_raw(queue, raw):
-        return Run(queue,
+    @classmethod
+    def from_raw(cls, queue, raw):
+        return cls(queue,
                    raw['remediation_id'],
                    raw['playbook_run_id'],
                    raw['account'],
