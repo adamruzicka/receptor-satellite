@@ -4,6 +4,8 @@ import json
 
 # TODO: Get this from somewhere
 SATELLITE_HOST = 'localhost:3000'
+SATELLITE_USERNAME = 'admin'
+SATELLITE_PASSWORD = 'changeme'
 
 
 async def trigger(queue, inputs, hosts):
@@ -18,7 +20,7 @@ async def trigger(queue, inputs, hosts):
     extra_data = {
         "json": payload,
         "headers": {"Content-Type": "application/json"},
-        "auth": aiohttp.BasicAuth("admin", "changeme") # TODO: Handle auth
+        "auth": aiohttp.BasicAuth(SATELLITE_USERNAME, SATELLITE_PASSWORD)
     }
     response = await request('POST', url, extra_data, queue)
     # TODO: Error checking
@@ -28,7 +30,7 @@ async def trigger(queue, inputs, hosts):
 async def output(queue, job_invocation_id, host_id):
     url = 'http://{}/api/v2/job_invocations/{}/hosts/{}'.format(SATELLITE_HOST, job_invocation_id, host_id)
     # TODO: Handle auth
-    response = await request('GET', url, {"auth": aiohttp.BasicAuth("admin", "changeme")}, queue)
+    response = await request('GET', url, {"auth": aiohttp.BasicAuth(SATELLITE_USERNAME, SATELLITE_PASSWORD)}, queue)
     print(response)
     # TODO: Error checking
     return json.loads(response['body'])
