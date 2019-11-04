@@ -28,8 +28,8 @@ class SatelliteAPI:
 
 
     @staticmethod
-    async def output(queue, host):
-        url = 'http://{}/api/v2/job_invocations/{}/hosts/{}'.format(SATELLITE_HOST, host.run.job_invocation_id, host.id)
+    async def output(queue, job_invocation_id, host_id):
+        url = 'http://{}/api/v2/job_invocations/{}/hosts/{}'.format(SATELLITE_HOST, job_invocation_id, host_id)
         # TODO: Handle auth
         response = await request('GET', url, {"auth": aiohttp.BasicAuth("admin", "changeme")}, queue)
         print(response)
@@ -46,6 +46,7 @@ async def request(method, url, extra_data, queue):
     except Exception as e:
         # TODO: Handle this
         await queue.put(str(e))
+
 
 class ResponseQueue(asyncio.Queue):
 
@@ -68,21 +69,21 @@ class ResponseQueue(asyncio.Queue):
         }
         await self.put(payload)
 
-    async def playbook_run_update(self, host, output):
+    async def playbook_run_update(self, host, playbook_run_id, output, sequence):
         payload = {
             'type': 'playbook_run_update',
-            'playbook_run_id': host.run.playbook_run_id,
-            'sequence': host.sequence,
-            'host': host.name,
+            'playbook_run_id': playbook_run_id,
+            'sequence': sequence,
+            'host': host,
             'console': output
         }
         await self.put(payload)
 
-    async def playbook_run_finished(self, host):
+    async def playbook_run_finished(self, host, playbook_run_id):
         payload = {
             'type': 'playbook_run_finished',
-            'playbook_run_id': host.run.playbook_run_id,
-            'host': host.name,
+            'playbook_run_id': playbook_run_id,
+            'host': host,
             'status': 'success' # TODO
         }
         await self.put(payload)
@@ -100,36 +101,13 @@ class Config:
         return cls(raw['text_updates'], raw['text_update_interval'], raw['text_update_full'])
 
 
-class Host:
-    def __init__(self, id, name, run):
-        self.id = id
-        self.name = name
-        self.run = run
-        self.sequence = 0
-
-
-    async def polling_loop(self):
-        while True:
-            print(f"POLLING LOOP FOR: {self.name}")
-            await asyncio.sleep(self.run.config.text_update_interval / 1000)
-            response = await SatelliteAPI.output(self.run.queue, self)
-            if self.run.config.text_updates and not response['output']:
-                print(f"POLLING LOOP UPDATE for {self.name}")
-                await self.run.queue.playbook_run_update(self, response['output'])
-                self.sequence += 1
-            if response['complete']:
-                print(f"POLLING LOOP FINISH for {self.name}")
-                await self.run.queue.playbook_run_finished(self)
-                break
-
-
 class Run:
     def __init__(self, queue, remediation_id, playbook_run_id, account, hosts, playbook, config = {}):
         self.queue = queue
         self.remedation_id = remediation_id
         self.playbook_run_id = playbook_run_id
         self.account = account
-        self.hosts = [Host(None, host, self) for host in hosts]
+        self.hosts = hosts
         self.playbook = playbook
         self.config = Config.from_raw(config)
 
@@ -148,22 +126,31 @@ class Run:
     async def start(self):
         response = await SatelliteAPI.trigger(self.queue,
                                               {'playbook': self.playbook},
-                                              [host.name for host in self.hosts])
+                                              self.hosts)
         print(response)
         self.job_invocation_id = response['id']
-        self.update_hosts(response['targeting']['hosts'])
+        # TODO: In theory Satellite may not know the requested host
+        self.hosts = [(host['id'], host['name']) for host in response['targeting']['hosts']]
         await self.queue.ack(self.playbook_run_id)
-        await asyncio.gather(*[host.polling_loop() for host in self.hosts])
+        await asyncio.gather(*[self.host_polling_loop(host) for host in self.hosts])
         self.queue.done = True
         print("MARKED QUEUE AS DONE")
 
-
-    def update_hosts(self, hosts):
-        hosts = {host['name']: host['id'] for host in hosts}
-        for host in self.hosts:
-            if host.name in hosts:
-                host.id = hosts[host.name]
-            # TODO: In theory Satellite may not know the requested host
+    async def host_polling_loop(self, host):
+        host_id, name = host
+        sequence = 0
+        while True:
+            print(f"POLLING LOOP FOR: {name}")
+            await asyncio.sleep(self.config.text_update_interval / 1000)
+            response = await SatelliteAPI.output(self.queue, self.job_invocation_id, host_id)
+            if self.config.text_updates and not response['output']:
+                print(f"POLLING LOOP UPDATE for {name}")
+                await self.queue.playbook_run_update(name, self.playbook_run_id, self.response['output'], sequence)
+                sequence += 1
+            if response['complete']:
+                print(f"POLLING LOOP FINISH for {name}")
+                await self.queue.playbook_run_finished(name, self.playbook_run_id)
+                break
 
 
 def execute(message):
