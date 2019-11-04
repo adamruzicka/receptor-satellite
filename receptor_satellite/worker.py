@@ -41,9 +41,8 @@ async def request(method, url, extra_data, queue):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.request(method, url, **extra_data) as response:
-                response_payload = dict(status=response.status,
-                                        body=await response.text())
-        return response_payload
+                return dict(status=response.status,
+                            body=await response.text())
     except Exception as e:
         # TODO: Handle this
         await queue.put(str(e))
