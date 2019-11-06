@@ -23,7 +23,7 @@ class Run:
         self.remedation_id = remediation_id
         self.playbook_run_id = playbook_run_id
         self.account = account
-        self.hosts = hosts
+        self.hostnames = hosts
         self.playbook = playbook
         self.config = Config.from_raw(config)
 
@@ -41,9 +41,9 @@ class Run:
 
     async def start(self):
         response = await satellite_api.trigger({'playbook': self.playbook},
-                                               self.hosts)
-        await self.queue.ack(self.playbook_run_id)
+                                               self.hostnames)
         print(response)
+        await self.queue.ack(self.playbook_run_id)
         body = json.loads(response['body'])
         self.job_invocation_id = body['id']
         # TODO: In theory Satellite may not know the requested host
