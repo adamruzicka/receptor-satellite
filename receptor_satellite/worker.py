@@ -65,7 +65,8 @@ class Run:
             body = response['body']
             if self.config.text_updates and body['output']:
                 print(f"POLLING LOOP UPDATE for {name}")
-                await self.queue.playbook_run_update(name, self.playbook_run_id, body['output'], sequence)
+                output = "".join(chunk['output'] for chunk in body['output'])
+                await self.queue.playbook_run_update(name, self.playbook_run_id, output, sequence)
                 sequence += 1
             if body['complete']:
                 print(f"POLLING LOOP FINISH for {name}")
