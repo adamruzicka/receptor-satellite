@@ -22,7 +22,12 @@ async def trigger(inputs, hosts):
         "headers": {"Content-Type": "application/json"},
         "auth": aiohttp.BasicAuth(SATELLITE_USERNAME, SATELLITE_PASSWORD)
     }
-    return await request('POST', url, extra_data)
+    response = await request('POST', url, extra_data)
+    if not response['error']:
+        response['body'] = json.loads(response['body'])
+        if response['status'] != 201:
+            response['error'] = response['body']['error']['message']
+    return response
 
 
 async def output(job_invocation_id, host_id):

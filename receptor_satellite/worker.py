@@ -44,10 +44,13 @@ class Run:
                                                self.hostnames)
         print(response)
         await self.queue.ack(self.playbook_run_id)
-        body = json.loads(response['body'])
-        self.job_invocation_id = body['id']
+        if response['error']:
+            await self.abort(response['error'])
+            self.queue.done = True
+            return
+        self.job_invocation_id = response['body']['id']
         # TODO: In theory Satellite may not know the requested host
-        self.hosts = [(host['id'], host['name']) for host in body['targeting']['hosts']]
+        self.hosts = [(host['id'], host['name']) for host in response['body']['targeting']['hosts']]
         await asyncio.gather(*[self.host_polling_loop(host) for host in self.hosts])
         self.queue.done = True
         print("MARKED QUEUE AS DONE")
@@ -68,6 +71,13 @@ class Run:
                 print(f"POLLING LOOP FINISH for {name}")
                 await self.queue.playbook_run_finished(name, self.playbook_run_id)
                 break
+
+    async def abort(self, error):
+        body = str(error)
+        updates = [self.queue.playbook_run_update(host, self.playbook_run_id, body, 0) for host in self.hostnames]
+        finishes = [self.queue.playbook_run_finished(host, self.playbook_run_id, False) for host in self.hostnames]
+        print(f"Aborting, waiting for {len(updates) + len(finishes)} coroutines")
+        return await asyncio.gather(*updates, *finishes)
 
 
 def execute(message):
