@@ -25,34 +25,34 @@ class Host:
         self.sequence = 0
         self.since = None if run.config.text_update_full else 0.0
 
-    def fail(self, message):
+
+    def mark_as_failed(self, message):
         queue = self.run.queue
         playbook_run_id = self.run.playbook_run_id
         return asyncio.gather(queue.playbook_run_update(self.name, playbook_run_id, message, self.sequence),
                               queue.playbook_run_finished(self.name, playbook_run_id, False))
 
-    def report_missing(self):
-        return asyncio.gather(*[self.fail('This host is not known by Satellite')])
 
     async def polling_loop(self):
         if self.id is None:
-            await self.report_missing()
-            return
+            return await self.mark_as_failed('This host is not known by Satellite')
         while True:
-            response = await self.safe_poll()
+            response = await self.poll_with_retries()
             if response['error']:
                 break
-            if self.run.config.text_updates and response['body']['output']:
-                output = "".join(chunk['output'] for chunk in response['body']['output'])
+            body = response['body']
+            if self.run.config.text_updates and body['output']:
+                output = "".join(chunk['output'] for chunk in body['output'])
                 if self.since is not None:
-                    self.since = response['body']['output'][-1]['timestamp']
+                    self.since = body['output'][-1]['timestamp']
                 await self.run.queue.playbook_run_update(self.name, self.run.playbook_run_id, output, self.sequence)
                 self.sequence += 1
-            if response['body']['complete']:
+            if body['complete']:
                 await self.run.queue.playbook_run_finished(self.name, self.run.playbook_run_id)
                 break
 
-    async def safe_poll(self):
+
+    async def poll_with_retries(self):
         retry = 0
         while retry < 5:
             await asyncio.sleep(self.run.config.text_update_interval / 1000)
@@ -60,8 +60,9 @@ class Host:
             if response['error'] is None:
                 return response
             retry += 1
-        await self.fail(response['error'])
+        await self.mark_as_failed(response['error'])
         return dict(error=True)
+
 
 class Run:
     def __init__(self, queue, remediation_id, playbook_run_id, account, hosts, playbook, config = {}):
@@ -98,14 +99,16 @@ class Run:
         self.queue.done = True
         print("MARKED QUEUE AS DONE")
 
+
     def update_hosts(self, hosts):
         host_map = {host.name: host for host in self.hosts}
         for host in hosts:
             host_map[host['name']].id = host['id']
 
+
     def abort(self, error):
         body = str(error)
-        return asyncio.gather(*[host.fail(body) for host in self.hosts])
+        return asyncio.gather(*[host.mark_as_failed(body) for host in self.hosts])
 
 
 def execute(message):
