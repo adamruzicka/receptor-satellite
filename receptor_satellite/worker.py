@@ -40,14 +40,14 @@ class Run:
 
 
     async def start(self):
-        response = await satellite_api.trigger(self.queue,
-                                               {'playbook': self.playbook},
+        response = await satellite_api.trigger({'playbook': self.playbook},
                                                self.hosts)
-        print(response)
-        self.job_invocation_id = response['id']
-        # TODO: In theory Satellite may not know the requested host
-        self.hosts = [(host['id'], host['name']) for host in response['targeting']['hosts']]
         await self.queue.ack(self.playbook_run_id)
+        print(response)
+        body = json.loads(response['body'])
+        self.job_invocation_id = body['id']
+        # TODO: In theory Satellite may not know the requested host
+        self.hosts = [(host['id'], host['name']) for host in body['targeting']['hosts']]
         await asyncio.gather(*[self.host_polling_loop(host) for host in self.hosts])
         self.queue.done = True
         print("MARKED QUEUE AS DONE")
@@ -58,12 +58,13 @@ class Run:
         while True:
             print(f"POLLING LOOP FOR: {name}")
             await asyncio.sleep(self.config.text_update_interval / 1000)
-            response = await satellite_api.output(self.queue, self.job_invocation_id, host_id)
-            if self.config.text_updates and not response['output']:
+            response = await satellite_api.output(self.job_invocation_id, host_id)
+            body = json.loads(response['body'])
+            if self.config.text_updates and not body['output']:
                 print(f"POLLING LOOP UPDATE for {name}")
-                await self.queue.playbook_run_update(name, self.playbook_run_id, self.response['output'], sequence)
+                await self.queue.playbook_run_update(name, self.playbook_run_id, body['output'], sequence)
                 sequence += 1
-            if response['complete']:
+            if body['complete']:
                 print(f"POLLING LOOP FINISH for {name}")
                 await self.queue.playbook_run_finished(name, self.playbook_run_id)
                 break

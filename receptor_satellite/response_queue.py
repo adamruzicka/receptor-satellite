@@ -32,12 +32,12 @@ class ResponseQueue(asyncio.Queue):
         }
         await self.put(payload)
 
-    async def playbook_run_finished(self, host, playbook_run_id):
+    async def playbook_run_finished(self, host, playbook_run_id, success=True):
         payload = {
             'type': 'playbook_run_finished',
             'playbook_run_id': playbook_run_id,
             'host': host,
-            'status': 'success' # TODO
+            'status': 'success' if success else 'failure'
         }
         await self.put(payload)
 
