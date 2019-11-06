@@ -38,8 +38,9 @@ class Host:
             await self.report_missing()
             return
         while True:
-            await asyncio.sleep(self.run.config.text_update_interval / 1000)
-            response = await satellite_api.output(self.run.job_invocation_id, self.id)
+            response = await self.safe_poll()
+            if response['error']:
+                break
             if self.run.config.text_updates and response['body']['output']:
                 output = "".join(chunk['output'] for chunk in response['body']['output'])
                 await self.run.queue.playbook_run_update(self.name, self.run.playbook_run_id, output, self.sequence)
@@ -48,6 +49,16 @@ class Host:
                 await self.run.queue.playbook_run_finished(self.name, self.run.playbook_run_id)
                 break
 
+    async def safe_poll(self):
+        retry = 0
+        while retry < 5:
+            await asyncio.sleep(self.run.config.text_update_interval / 1000)
+            response = await satellite_api.output(self.run.job_invocation_id, self.id)
+            if response['error'] is None:
+                return response
+            retry += 1
+        await self.fail(response['error'])
+        return dict(error=True)
 
 class Run:
     def __init__(self, queue, remediation_id, playbook_run_id, account, hosts, playbook, config = {}):
