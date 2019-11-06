@@ -23,6 +23,7 @@ class Host:
         self.id = id
         self.name = name
         self.sequence = 0
+        self.since = None if run.config.text_update_full else 0.0
 
     def fail(self, message):
         queue = self.run.queue
@@ -43,6 +44,8 @@ class Host:
                 break
             if self.run.config.text_updates and response['body']['output']:
                 output = "".join(chunk['output'] for chunk in response['body']['output'])
+                if self.since is not None:
+                    self.since = response['body']['output'][-1]['timestamp']
                 await self.run.queue.playbook_run_update(self.name, self.run.playbook_run_id, output, self.sequence)
                 self.sequence += 1
             if response['body']['complete']:
@@ -53,7 +56,7 @@ class Host:
         retry = 0
         while retry < 5:
             await asyncio.sleep(self.run.config.text_update_interval / 1000)
-            response = await satellite_api.output(self.run.job_invocation_id, self.id)
+            response = await satellite_api.output(self.run.job_invocation_id, self.id, self.since)
             if response['error'] is None:
                 return response
             retry += 1
@@ -66,9 +69,9 @@ class Run:
         self.remedation_id = remediation_id
         self.playbook_run_id = playbook_run_id
         self.account = account
-        self.hosts = [Host(self, None, name) for name in hosts]
         self.playbook = playbook
         self.config = Config.from_raw(config)
+        self.hosts = [Host(self, None, name) for name in hosts]
 
 
     @classmethod

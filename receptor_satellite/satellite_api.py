@@ -26,10 +26,12 @@ async def trigger(inputs, hosts):
     return sanitize_response(response, 201)
 
 
-async def output(job_invocation_id, host_id):
+async def output(job_invocation_id, host_id, since):
     url = 'http://{}/api/v2/job_invocations/{}/hosts/{}'.format(SATELLITE_HOST, job_invocation_id, host_id)
-    # TODO: Handle auth
-    response = await request('GET', url, {"auth": aiohttp.BasicAuth(SATELLITE_USERNAME, SATELLITE_PASSWORD)})
+    extra_data = {"auth": aiohttp.BasicAuth(SATELLITE_USERNAME, SATELLITE_PASSWORD)}
+    if since is not None:
+        extra_data["params"] = {"since": str(since)}
+    response = await request('GET', url, extra_data)
     return sanitize_response(response, 200)
 
 
@@ -45,7 +47,6 @@ async def request(method, url, extra_data):
 
 
 def sanitize_response(response, expected_status):
-    print(response)
     if not response['error']:
         response['body'] = json.loads(response['body'])
         if response['status'] != expected_status:
