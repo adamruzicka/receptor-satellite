@@ -49,9 +49,9 @@ class Run:
             self.queue.done = True
             return
         self.job_invocation_id = response['body']['id']
-        # TODO: In theory Satellite may not know the requested host
         self.hosts = [(host['id'], host['name']) for host in response['body']['targeting']['hosts']]
-        await asyncio.gather(*[self.host_polling_loop(host) for host in self.hosts])
+        await asyncio.gather(self.handle_missing_hosts(),
+                             *[self.host_polling_loop(host) for host in self.hosts])
         self.queue.done = True
         print("MARKED QUEUE AS DONE")
 
@@ -72,12 +72,18 @@ class Run:
                 await self.queue.playbook_run_finished(name, self.playbook_run_id)
                 break
 
-    async def abort(self, error):
+    def abort(self, error):
         body = str(error)
-        updates = [self.queue.playbook_run_update(host, self.playbook_run_id, body, 0) for host in self.hostnames]
-        finishes = [self.queue.playbook_run_finished(host, self.playbook_run_id, False) for host in self.hostnames]
-        print(f"Aborting, waiting for {len(updates) + len(finishes)} coroutines")
-        return await asyncio.gather(*updates, *finishes)
+        return asyncio.gather(*[self.fail_host(host, body) for host in self.hostnames])
+
+    def fail_host(self, host, message):
+        return asyncio.gather(self.queue.playbook_run_update(host, self.playbook_run_id, message, 0),
+                              self.queue.playbook_run_finished(host, self.playbook_run_id, False))
+
+
+    def handle_missing_hosts(self):
+        unknown_hosts = set(self.hostnames) - set([host[1] for host in self.hosts])
+        return asyncio.gather(*[self.fail_host(host, 'This host is not known by Satellite') for host in unknown_hosts])
 
 
 def execute(message):
