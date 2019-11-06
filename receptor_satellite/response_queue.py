@@ -15,14 +15,14 @@ class ResponseQueue(asyncio.Queue):
             raise StopAsyncIteration
         return await self.get()
 
-    async def ack(self, playbook_run_id):
+    def ack(self, playbook_run_id):
         payload = {
             'type': 'playbook_run_ack',
             'playbook_run_id': playbook_run_id
         }
-        await self.put(payload)
+        return self.put(payload)
 
-    async def playbook_run_update(self, host, playbook_run_id, output, sequence):
+    def playbook_run_update(self, host, playbook_run_id, output, sequence):
         payload = {
             'type': 'playbook_run_update',
             'playbook_run_id': playbook_run_id,
@@ -30,14 +30,14 @@ class ResponseQueue(asyncio.Queue):
             'host': host,
             'console': output
         }
-        await self.put(payload)
+        return self.put(payload)
 
-    async def playbook_run_finished(self, host, playbook_run_id, success=True):
+    def playbook_run_finished(self, host, playbook_run_id, success=True):
         payload = {
             'type': 'playbook_run_finished',
             'playbook_run_id': playbook_run_id,
             'host': host,
             'status': 'success' if success else 'failure'
         }
-        await self.put(payload)
+        return self.put(payload)
 
