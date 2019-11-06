@@ -17,13 +17,45 @@ class Config:
         return cls(raw['text_updates'], raw['text_update_interval'], raw['text_update_full'])
 
 
+class Host:
+    def __init__(self, run, id, name):
+        self.run = run
+        self.id = id
+        self.name = name
+        self.sequence = 0
+
+    def fail(self, message):
+        queue = self.run.queue
+        playbook_run_id = self.run.playbook_run_id
+        return asyncio.gather(queue.playbook_run_update(self.name, playbook_run_id, message, self.sequence),
+                              queue.playbook_run_finished(self.name, playbook_run_id, False))
+
+    def report_missing(self):
+        return asyncio.gather(*[self.fail('This host is not known by Satellite')])
+
+    async def polling_loop(self):
+        if self.id is None:
+            await self.report_missing()
+            return
+        while True:
+            await asyncio.sleep(self.run.config.text_update_interval / 1000)
+            response = await satellite_api.output(self.run.job_invocation_id, self.id)
+            if self.run.config.text_updates and response['body']['output']:
+                output = "".join(chunk['output'] for chunk in response['body']['output'])
+                await self.run.queue.playbook_run_update(self.name, self.run.playbook_run_id, output, self.sequence)
+                self.sequence += 1
+            if response['body']['complete']:
+                await self.run.queue.playbook_run_finished(self.name, self.run.playbook_run_id)
+                break
+
+
 class Run:
     def __init__(self, queue, remediation_id, playbook_run_id, account, hosts, playbook, config = {}):
         self.queue = queue
         self.remedation_id = remediation_id
         self.playbook_run_id = playbook_run_id
         self.account = account
-        self.hostnames = hosts
+        self.hosts = [Host(self, None, name) for name in hosts]
         self.playbook = playbook
         self.config = Config.from_raw(config)
 
@@ -41,49 +73,25 @@ class Run:
 
     async def start(self):
         response = await satellite_api.trigger({'playbook': self.playbook},
-                                               self.hostnames)
-        print(response)
+                                               [host.name for host in self.hosts])
         await self.queue.ack(self.playbook_run_id)
         if response['error']:
             await self.abort(response['error'])
-            self.queue.done = True
-            return
-        self.job_invocation_id = response['body']['id']
-        self.hosts = [(host['id'], host['name']) for host in response['body']['targeting']['hosts']]
-        await asyncio.gather(self.handle_missing_hosts(),
-                             *[self.host_polling_loop(host) for host in self.hosts])
+        else:
+            self.job_invocation_id = response['body']['id']
+            self.update_hosts(response['body']['targeting']['hosts'])
+            await asyncio.gather(*[host.polling_loop() for host in self.hosts])
         self.queue.done = True
         print("MARKED QUEUE AS DONE")
 
-    async def host_polling_loop(self, host):
-        host_id, name = host
-        sequence = 0
-        while True:
-            print(f"POLLING LOOP FOR: {name}")
-            await asyncio.sleep(self.config.text_update_interval / 1000)
-            response = await satellite_api.output(self.job_invocation_id, host_id)
-            body = response['body']
-            if self.config.text_updates and body['output']:
-                print(f"POLLING LOOP UPDATE for {name}")
-                output = "".join(chunk['output'] for chunk in body['output'])
-                await self.queue.playbook_run_update(name, self.playbook_run_id, output, sequence)
-                sequence += 1
-            if body['complete']:
-                print(f"POLLING LOOP FINISH for {name}")
-                await self.queue.playbook_run_finished(name, self.playbook_run_id)
-                break
+    def update_hosts(self, hosts):
+        host_map = {host.name: host for host in self.hosts}
+        for host in hosts:
+            host_map[host['name']].id = host['id']
 
     def abort(self, error):
         body = str(error)
-        return asyncio.gather(*[self.fail_host(host, body) for host in self.hostnames])
-
-    def fail_host(self, host, message):
-        return asyncio.gather(self.queue.playbook_run_update(host, self.playbook_run_id, message, 0),
-                              self.queue.playbook_run_finished(host, self.playbook_run_id, False))
-
-    def handle_missing_hosts(self):
-        unknown_hosts = set(self.hostnames) - set([host[1] for host in self.hosts])
-        return asyncio.gather(*[self.fail_host(host, 'This host is not known by Satellite') for host in unknown_hosts])
+        return asyncio.gather(*[host.fail(body) for host in self.hosts])
 
 
 def execute(message):
