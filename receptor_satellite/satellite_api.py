@@ -23,17 +23,14 @@ async def trigger(inputs, hosts):
         "auth": aiohttp.BasicAuth(SATELLITE_USERNAME, SATELLITE_PASSWORD)
     }
     response = await request('POST', url, extra_data)
-    if not response['error']:
-        response['body'] = json.loads(response['body'])
-        if response['status'] != 201:
-            response['error'] = response['body']['error']['message']
-    return response
+    return sanitize_response(response, 201)
 
 
 async def output(job_invocation_id, host_id):
     url = 'http://{}/api/v2/job_invocations/{}/hosts/{}'.format(SATELLITE_HOST, job_invocation_id, host_id)
     # TODO: Handle auth
-    return await request('GET', url, {"auth": aiohttp.BasicAuth(SATELLITE_USERNAME, SATELLITE_PASSWORD)})
+    response = await request('GET', url, {"auth": aiohttp.BasicAuth(SATELLITE_USERNAME, SATELLITE_PASSWORD)})
+    return sanitize_response(response, 200)
 
 
 async def request(method, url, extra_data):
@@ -45,3 +42,12 @@ async def request(method, url, extra_data):
                             error=None)
     except Exception as e:
         return dict(error=e, body="{}", status=-1)
+
+
+def sanitize_response(response, expected_status):
+    print(response)
+    if not response['error']:
+        response['body'] = json.loads(response['body'])
+        if response['status'] != expected_status:
+            response['error'] = response['body']['error']['message']
+    return response

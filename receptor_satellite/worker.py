@@ -62,8 +62,8 @@ class Run:
             print(f"POLLING LOOP FOR: {name}")
             await asyncio.sleep(self.config.text_update_interval / 1000)
             response = await satellite_api.output(self.job_invocation_id, host_id)
-            body = json.loads(response['body'])
-            if self.config.text_updates and not body['output']:
+            body = response['body']
+            if self.config.text_updates and body['output']:
                 print(f"POLLING LOOP UPDATE for {name}")
                 await self.queue.playbook_run_update(name, self.playbook_run_id, body['output'], sequence)
                 sequence += 1
@@ -79,7 +79,6 @@ class Run:
     def fail_host(self, host, message):
         return asyncio.gather(self.queue.playbook_run_update(host, self.playbook_run_id, message, 0),
                               self.queue.playbook_run_finished(host, self.playbook_run_id, False))
-
 
     def handle_missing_hosts(self):
         unknown_hosts = set(self.hostnames) - set([host[1] for host in self.hosts])
