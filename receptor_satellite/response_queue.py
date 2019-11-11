@@ -11,9 +11,13 @@ class ResponseQueue(asyncio.Queue):
         return self
 
     async def __anext__(self):
-        if self.done:
-            raise StopAsyncIteration
-        return await self.get()
+        while True:
+            try:
+                return self.get_nowait()
+            except asyncio.QueueEmpty:
+                if self.done:
+                    raise StopAsyncIteration
+            await asyncio.sleep(0.5)
 
     def ack(self, playbook_run_id):
         payload = {
