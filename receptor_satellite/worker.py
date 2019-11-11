@@ -111,7 +111,7 @@ class Run:
         return asyncio.gather(*[host.mark_as_failed(body) for host in self.hosts])
 
 
-def execute(message, config = {}):
+def execute(message, config):
     loop = asyncio.get_event_loop()
     queue = ResponseQueue(loop=loop)
     payload = json.loads(message.raw_payload)
