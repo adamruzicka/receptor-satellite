@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from . import satellite_api
+from .satellite_api import SatelliteAPI
 from .response_queue import ResponseQueue
 from .run_monitor import run_monitor
 
@@ -57,7 +57,7 @@ class Host:
         retry = 0
         while retry < 5:
             await asyncio.sleep(self.run.config.text_update_interval / 1000)
-            response = await satellite_api.output(self.run.job_invocation_id, self.id, self.since)
+            response = await self.run.satellite_api.output(self.run.job_invocation_id, self.id, self.since)
             if response['error'] is None:
                 return response
             retry += 1
@@ -66,7 +66,7 @@ class Host:
 
 
 class Run:
-    def __init__(self, queue, remediation_id, playbook_run_id, account, hosts, playbook, config = {}):
+    def __init__(self, queue, remediation_id, playbook_run_id, account, hosts, playbook, config, plugin_config):
         self.queue = queue
         self.remedation_id = remediation_id
         self.playbook_run_id = playbook_run_id
@@ -74,17 +74,19 @@ class Run:
         self.playbook = playbook
         self.config = Config.from_raw(config)
         self.hosts = [Host(self, None, name) for name in hosts]
+        self.satellite_api = SatelliteAPI.from_plugin_config(plugin_config)
 
 
     @classmethod
-    def from_raw(cls, queue, raw):
+    def from_raw(cls, queue, raw, plugin_config):
         return cls(queue,
                    raw['remediation_id'],
                    raw['playbook_run_id'],
                    raw['account'],
                    raw['hosts'],
                    raw['playbook'],
-                   raw['config'])
+                   raw['config'],
+                   plugin_config)
 
 
     async def start(self):
@@ -92,8 +94,8 @@ class Run:
             print(f"Playbook run {self.playbook_run_id} already known, skipping.")
             self.queue.done = True
             return
-        response = await satellite_api.trigger({'playbook': self.playbook},
-                                               [host.name for host in self.hosts])
+        response = await self.satellite_api.trigger({'playbook': self.playbook},
+                                                    [host.name for host in self.hosts])
         await self.queue.ack(self.playbook_run_id)
         if response['error']:
             await self.abort(response['error'])
@@ -121,5 +123,5 @@ def execute(message, config):
     loop = asyncio.get_event_loop()
     queue = ResponseQueue(loop=loop)
     payload = json.loads(message.raw_payload)
-    loop.create_task(Run.from_raw(queue, payload).start())
+    loop.create_task(Run.from_raw(queue, payload, config).start())
     return queue
