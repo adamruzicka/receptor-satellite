@@ -35,6 +35,7 @@ class Host:
 
 
     async def polling_loop(self):
+        last_output = ""
         if self.id is None:
             return await self.mark_as_failed('This host is not known by Satellite')
         while True:
@@ -43,13 +44,13 @@ class Host:
                 break
             body = response['body']
             if self.run.config.text_updates and body['output']:
-                output = "".join(chunk['output'] for chunk in body['output'])
+                last_output = "".join(chunk['output'] for chunk in body['output'])
                 if self.since is not None:
                     self.since = body['output'][-1]['timestamp']
-                await self.run.queue.playbook_run_update(self.name, self.run.playbook_run_id, output, self.sequence)
+                await self.run.queue.playbook_run_update(self.name, self.run.playbook_run_id, last_output, self.sequence)
                 self.sequence += 1
             if body['complete']:
-                await self.run.queue.playbook_run_finished(self.name, self.run.playbook_run_id)
+                await self.run.queue.playbook_run_finished(self.name, self.run.playbook_run_id, last_output.endswith('Exit status: 0'))
                 break
 
 
