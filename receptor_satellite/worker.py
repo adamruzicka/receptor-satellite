@@ -43,7 +43,7 @@ class Host:
             if response['error']:
                 break
             body = response['body']
-            if self.run.config.text_updates and body['output']:
+            if body['output'] and (self.run.config.text_updates or body['complete']):
                 last_output = "".join(chunk['output'] for chunk in body['output'])
                 if self.since is not None:
                     self.since = body['output'][-1]['timestamp']
