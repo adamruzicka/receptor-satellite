@@ -91,6 +91,7 @@ class Run:
 
 
     async def start(self):
+        await self.satellite_api.init_session()
         if not await run_monitor.register(self):
             print(f"Playbook run {self.playbook_run_id} already known, skipping.")
             self.queue.done = True
@@ -105,7 +106,8 @@ class Run:
             self.update_hosts(response['body']['targeting']['hosts'])
             await asyncio.gather(*[host.polling_loop() for host in self.hosts])
         self.queue.done = True
-        await run_monitor.done(self)
+        await asyncio.gather(run_monitor.done(self),
+                             self.satellite_api.close_session())
         print("MARKED QUEUE AS DONE")
 
 

@@ -50,18 +50,24 @@ class SatelliteAPI:
 
     async def request(self, method, url, extra_data):
         try:
-            async with aiohttp.ClientSession() as session:
-                extra_data = {**extra_data, **dict(auth=aiohttp.BasicAuth(self.username, self.password), ssl=self.context)}
-                async with session.request(method, url, **extra_data) as response:
-                    return dict(status=response.status,
-                                body=await response.text(),
-                                error=None)
+            extra_data['ssl'] = self.context
+            async with self.session.request(method, url, **extra_data) as response:
+                return dict(status=response.status,
+                            body=await response.text(),
+                            error=None)
         except Exception as e:
             return dict(error=e, body="{}", status=-1)
 
+    async def init_session(self):
+        auth = aiohttp.BasicAuth(self.username, self.password)
+        self.session = aiohttp.ClientSession(auth=auth)
+
+    async def close_session(self):
+        await self.session.close()
+        self.session = None
+
 
 def sanitize_response(response, expected_status):
-    print(response)
     if not response['error']:
         response['body'] = json.loads(response['body'])
         if response['status'] != expected_status:
