@@ -4,15 +4,15 @@ import ssl
 
 
 class SatelliteAPI:
-    def __init__(self, username, password, url):
+    def __init__(self, username, password, url, ca_file):
         self.username = username
         self.password = password
         self.url = url
         self.context = None
-        if url.startswith('https'):
+        self.session = None
+        if url.startswith('https') and ca_file is not None:
             self.context = ssl.SSLContext()
-            cafile = '/etc/puppetlabs/puppet/ssl/certs/ca.pem'
-            self.context.load_verify_locations(cafile=cafile)
+            self.context.load_verify_locations(cafile=ca_file)
             self.context.verify_mode = ssl.CERT_REQUIRED
 
 
@@ -20,7 +20,8 @@ class SatelliteAPI:
     def from_plugin_config(cls, plugin_config):
         return cls(plugin_config['username'],
                    plugin_config['password'],
-                   plugin_config['url'])
+                   plugin_config['url'],
+                   plugin_config.get('ca_file'))
 
     async def trigger(self, inputs, hosts):
         payload = {
