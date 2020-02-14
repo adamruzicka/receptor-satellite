@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 
 from .satellite_api import SatelliteAPI
 from .response_queue import ResponseQueue
@@ -9,6 +10,15 @@ from .run_monitor import run_monitor
 def receptor_export(func):
     setattr(func, "receptor_export", True)
     return func
+
+
+def configure_logger():
+    logger = logging.getLogger(__name__)
+    receptor_logger = logging.getLogger("receptor")
+    logger.setLevel(receptor_logger.level)
+    for handler in receptor_logger.handlers:
+        logger.addHandler(handler)
+    return logger
 
 
 class Config:
@@ -90,6 +100,7 @@ class Run:
         playbook,
         config,
         plugin_config,
+        logger,
     ):
         self.queue = queue
         self.remedation_id = remediation_id
@@ -99,9 +110,10 @@ class Run:
         self.config = Config.from_raw(config)
         self.hosts = [Host(self, None, name) for name in hosts]
         self.satellite_api = SatelliteAPI.from_plugin_config(plugin_config)
+        self.logger = logger
 
     @classmethod
-    def from_raw(cls, queue, raw, plugin_config):
+    def from_raw(cls, queue, raw, plugin_config, logger):
         return cls(
             queue,
             raw["remediation_id"],
@@ -111,12 +123,15 @@ class Run:
             raw["playbook"],
             raw["config"],
             plugin_config,
+            logger,
         )
 
     async def start(self):
         await self.satellite_api.init_session()
         if not await run_monitor.register(self):
-            print(f"Playbook run {self.playbook_run_id} already known, skipping.")
+            self.logger.info(
+                f"Playbook run {self.playbook_run_id} already known, skipping."
+            )
             return
         response = await self.satellite_api.trigger(
             {"playbook": self.playbook}, [host.name for host in self.hosts]
@@ -126,10 +141,13 @@ class Run:
             self.abort(response["error"])
         else:
             self.job_invocation_id = response["body"]["id"]
+            self.logger.info(
+                f"Playbook run {self.playbook_run_id} running as job invocation {self.job_invocatino_id}"
+            )
             self.update_hosts(response["body"]["targeting"]["hosts"])
             await asyncio.gather(*[host.polling_loop() for host in self.hosts])
         await asyncio.gather(run_monitor.done(self), self.satellite_api.close_session())
-        print("MARKED QUEUE AS DONE")
+        self.logger.info(f"Playbook run {self.playbook_run_id} done")
 
     def update_hosts(self, hosts):
         host_map = {host.name: host for host in self.hosts}
@@ -137,13 +155,17 @@ class Run:
             host_map[host["name"]].id = host["id"]
 
     def abort(self, error):
-        body = str(error)
+        error = str(error)
+        self.logger.error(
+            f"Playbook run {self.playbook_run_id} encountered error `{error}`, aborting."
+        )
         for host in self.hosts:
-            host.mark_as_failed(body)
+            host.mark_as_failed(error)
 
 
 @receptor_export
 def execute(message, config, queue):
+    logger = configure_logger()
     queue = ResponseQueue(queue)
     payload = json.loads(message.raw_payload)
-    asyncio.run(Run.from_raw(queue, payload, config).start())
+    asyncio.run(Run.from_raw(queue, payload, config, logger).start())
