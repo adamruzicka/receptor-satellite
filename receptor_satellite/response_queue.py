@@ -1,30 +1,17 @@
 import asyncio
 
 
-class ResponseQueue(asyncio.Queue):
+class ResponseQueue:
 
-    def __init__(self, *args, **kwargs):
-        self.done = False
-        super().__init__(*args, **kwargs)
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        while True:
-            try:
-                return self.get_nowait()
-            except asyncio.QueueEmpty:
-                if self.done:
-                    raise StopAsyncIteration
-            await asyncio.sleep(0.5)
+    def __init__(self, queue):
+        self.queue = queue
 
     def ack(self, playbook_run_id):
         payload = {
             'type': 'playbook_run_ack',
             'playbook_run_id': playbook_run_id
         }
-        return self.put(payload)
+        return self.queue.put(payload)
 
     def playbook_run_update(self, host, playbook_run_id, output, sequence):
         payload = {
@@ -34,7 +21,7 @@ class ResponseQueue(asyncio.Queue):
             'host': host,
             'console': output
         }
-        return self.put(payload)
+        return self.queue.put(payload)
 
     def playbook_run_finished(self, host, playbook_run_id, success=True):
         payload = {
@@ -43,5 +30,5 @@ class ResponseQueue(asyncio.Queue):
             'host': host,
             'status': 'success' if success else 'failure'
         }
-        return self.put(payload)
+        return self.queue.put(payload)
 

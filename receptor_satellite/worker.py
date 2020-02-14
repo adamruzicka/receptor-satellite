@@ -5,6 +5,10 @@ from .satellite_api import SatelliteAPI
 from .response_queue import ResponseQueue
 from .run_monitor import run_monitor
 
+def receptor_export(func):
+    setattr(func, "receptor_export", True)
+    return func
+
 
 class Config:
     def __init__(self, text_updates = False, text_update_interval = 5000, text_update_full = True):
@@ -30,14 +34,14 @@ class Host:
     def mark_as_failed(self, message):
         queue = self.run.queue
         playbook_run_id = self.run.playbook_run_id
-        return asyncio.gather(queue.playbook_run_update(self.name, playbook_run_id, message, self.sequence),
-                              queue.playbook_run_finished(self.name, playbook_run_id, False))
+        queue.playbook_run_update(self.name, playbook_run_id, message, self.sequence)
+        queue.playbook_run_finished(self.name, playbook_run_id, False)
 
 
     async def polling_loop(self):
         last_output = ""
         if self.id is None:
-            return await self.mark_as_failed('This host is not known by Satellite')
+            return self.mark_as_failed('This host is not known by Satellite')
         while True:
             response = await self.poll_with_retries()
             if response['error']:
@@ -47,10 +51,10 @@ class Host:
                 last_output = "".join(chunk['output'] for chunk in body['output'])
                 if self.since is not None:
                     self.since = body['output'][-1]['timestamp']
-                await self.run.queue.playbook_run_update(self.name, self.run.playbook_run_id, last_output, self.sequence)
+                self.run.queue.playbook_run_update(self.name, self.run.playbook_run_id, last_output, self.sequence)
                 self.sequence += 1
             if body['complete']:
-                await self.run.queue.playbook_run_finished(self.name, self.run.playbook_run_id, last_output.endswith('Exit status: 0'))
+                self.run.queue.playbook_run_finished(self.name, self.run.playbook_run_id, last_output.endswith('Exit status: 0'))
                 break
 
 
@@ -62,7 +66,7 @@ class Host:
             if response['error'] is None:
                 return response
             retry += 1
-        await self.mark_as_failed(response['error'])
+        self.mark_as_failed(response['error'])
         return dict(error=True)
 
 
@@ -94,18 +98,16 @@ class Run:
         await self.satellite_api.init_session()
         if not await run_monitor.register(self):
             print(f"Playbook run {self.playbook_run_id} already known, skipping.")
-            self.queue.done = True
             return
         response = await self.satellite_api.trigger({'playbook': self.playbook},
                                                     [host.name for host in self.hosts])
-        await self.queue.ack(self.playbook_run_id)
+        self.queue.ack(self.playbook_run_id)
         if response['error']:
-            await self.abort(response['error'])
+            self.abort(response['error'])
         else:
             self.job_invocation_id = response['body']['id']
             self.update_hosts(response['body']['targeting']['hosts'])
             await asyncio.gather(*[host.polling_loop() for host in self.hosts])
-        self.queue.done = True
         await asyncio.gather(run_monitor.done(self),
                              self.satellite_api.close_session())
         print("MARKED QUEUE AS DONE")
@@ -119,12 +121,12 @@ class Run:
 
     def abort(self, error):
         body = str(error)
-        return asyncio.gather(*[host.mark_as_failed(body) for host in self.hosts])
+        for host in self.hosts:
+            host.mark_as_failed(body)
 
 
-def execute(message, config):
-    loop = asyncio.get_event_loop()
-    queue = ResponseQueue(loop=loop)
+@receptor_export
+def execute(message, config, queue):
+    queue = ResponseQueue(queue)
     payload = json.loads(message.raw_payload)
-    loop.create_task(Run.from_raw(queue, payload, config).start())
-    return queue
+    asyncio.run(Run.from_raw(queue, payload, config).start())
