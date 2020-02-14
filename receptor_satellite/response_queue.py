@@ -1,6 +1,3 @@
-import asyncio
-
-
 class ResponseQueue:
 
     def __init__(self, queue):
