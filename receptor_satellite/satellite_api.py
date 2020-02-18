@@ -3,6 +3,55 @@ import json
 import ssl
 
 
+HEALTH_CHECK_OK = "ok"
+HEALTH_CHECK_ERROR = "error"
+HEALTH_OK = 0
+HEALTH_NO_CONNECTION = 1
+HEALTH_BAD_HTTP_STATUS = 2
+HEALTH_UUID_UNKNOWN = 3
+HEALTH_UUID_MISMATCH = 4
+HEALTH_SP_UNKNOWN = 5
+HEALTH_SP_NO_ANSIBLE = 6
+HEALTH_SP_OFFLINE = 7
+
+HEALTH_STATUS_RESULTS = {
+    HEALTH_OK: dict(
+        result=HEALTH_CHECK_OK, fifi_status=True, message="Satellite online and ready",
+    ),
+    HEALTH_NO_CONNECTION: dict(
+        result=HEALTH_CHECK_ERROR,
+        fifi_status=False,
+        message="Receptor could not connect to Satellite: {error}",
+    ),
+    HEALTH_BAD_HTTP_STATUS: dict(
+        result=HEALTH_CHECK_ERROR, fifi_status=False, message="Satellite error: {error}"
+    ),
+    HEALTH_UUID_UNKNOWN: dict(
+        result=HEALTH_CHECK_ERROR,
+        fifi_status=False,
+        message="Could not identify Satellite instance UUID",
+    ),
+    HEALTH_UUID_MISMATCH: dict(
+        result=HEALTH_CHECK_ERROR,
+        fifi_status=False,
+        message="Satellite reports different instance UUID: {uuid}",
+    ),
+    HEALTH_SP_UNKNOWN: dict(
+        result=HEALTH_CHECK_OK,
+        fifi_status=False,
+        message="Could not find configured Smart Proxies",
+    ),
+    HEALTH_SP_NO_ANSIBLE: dict(
+        result=HEALTH_CHECK_OK,
+        fifi_status=False,
+        message="Smart Proxies do not have Ansible support",
+    ),
+    HEALTH_SP_OFFLINE: dict(
+        result=HEALTH_CHECK_OK, fifi_status=False, message="Smart Proxies are offline"
+    ),
+}
+
+
 class SatelliteAPI:
     def __init__(self, username, password, url, ca_file):
         self.username = username
@@ -47,6 +96,12 @@ class SatelliteAPI:
         response = await self.request("GET", url, extra_data)
         return sanitize_response(response, 200)
 
+    def health_check_response(self, health_status, msg_context={}):
+        to_return = HEALTH_STATUS_RESULTS[health_status].copy()
+        to_return["code"] = health_status
+        to_return["message"] = to_return["message"].format(**msg_context)
+        return to_return
+
     async def health_check(self, foreman_uuid):
         # Ensure that the Foreman UUID matches the addressed one
         url = f"{self.url}/api/settings?search=name%20%3D%20instance_id"
@@ -54,29 +109,17 @@ class SatelliteAPI:
         status = sanitize_response(response, 200)
         if status["error"]:
             if status["status"] == -1:
-                return dict(
-                    result="error",
-                    message=f"Receptor could not connect to Satellite: {status['error']}",
-                    fifi_status=False,
-                    code=1
-                )
+                return self.health_check_response(HEALTH_NO_CONNECTION, status)
             else:
-                return dict(
-                    result="error", message=f"Satellite error: {status['error']}",
-                    fifi_status=False, code=2
-                )
+                return self.health_check_response(HEALTH_BAD_HTTP_STATUS, status)
         try:
             gathered_foreman_uuid = status["body"]["results"][0]["value"]
         except (IndexError, KeyError):
-            return dict(result="error", message="Could not verify Satellite UUID.",
-                        fifi_status=False, code=3)
+            return self.health_check_response(HEALTH_UUID_UNKNOWN)
         else:
             if foreman_uuid.lower() != gathered_foreman_uuid.lower():
-                return dict(
-                    result="error",
-                    message=f"Receptor is connected to Satellite {gathered_foreman_uuid}",
-                    fifi_status=False,
-                    code=4
+                return self.health_check_response(
+                    HEALTH_UUID_MISMATCH, dict(uuid=gathered_foreman_uuid)
                 )
 
         # Ensure that the Foreman has at least one working smart proxy with Ansible
@@ -85,18 +128,9 @@ class SatelliteAPI:
         status = sanitize_response(response, 200)
         if status["error"]:
             if status["status"] == -1:
-                return dict(
-                    result="error",
-                    message=f"Receptor could not connect to Satellite: {status['error']}",
-                    fifi_status=False,
-                    code=1
-                )
+                return self.health_check_response(HEALTH_NO_CONNECTION, status)
             else:
-                return dict(
-                    result="error", 
-                    message=f"Satellite error: {status['error']}",
-                    fifi_status=False, code=2
-                )
+                return self.health_check_response(HEALTH_BAD_HTTP_STATUS, status)
         try:
             ansible_proxies = [
                 sp
@@ -104,34 +138,15 @@ class SatelliteAPI:
                 if "ansible" in sp["features"]
             ]
         except KeyError:
-            return dict(
-                result="ok", 
-                message="Could not verify Smart Proxy status",
-                code=5,
-                fifi_status=False)
+            return self.health_check_response(HEALTH_SP_UNKNOWN)
         else:
             if not ansible_proxies:
-                return dict(
-                    result="ok",
-                    message=f"Satellite does not have any Ansible enabled Smart Proxies",
-                    code=6,
-                    fifi_status=False
-                )
+                return self.health_check_response(HEALTH_SP_NO_ANSIBLE)
             ok_proxies = [sp for sp in ansible_proxies if sp["status"] == "ok"]
             if not ok_proxies:
-                return dict(
-                    result="ok", 
-                    message="Satellite Smart Proxies are offline",
-                    code=7,
-                    fifi_status=False
-                )
+                return self.health_check_response(HEALTH_SP_OFFLINE)
 
-        return dict(
-            result="ok", 
-            message="Satellite online and ready.",
-            fifi_status=True,
-            code=0
-        )
+        return self.health_check_response(HEALTH_OK)
 
     async def request(self, method, url, extra_data):
         try:
