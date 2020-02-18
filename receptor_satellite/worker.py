@@ -169,3 +169,17 @@ def execute(message, config, queue):
     queue = ResponseQueue(queue)
     payload = json.loads(message.raw_payload)
     asyncio.run(Run.from_raw(queue, payload, config, logger).start())
+
+
+@receptor_export
+def health_check(message, config, queue):
+    logger = configure_logger()
+    try:
+        payload = json.loads(message.raw_payload)
+    except json.JSONDecodeError:
+        logger.exeception('Invalid JSON format for payload.')
+        raise
+    
+    api = SatelliteAPI.from_plugin_config(config)
+    result = asyncio.run(api.health_check(payload.get('foreman_uuid', '')))
+    queue.put(result)

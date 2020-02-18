@@ -47,6 +47,92 @@ class SatelliteAPI:
         response = await self.request("GET", url, extra_data)
         return sanitize_response(response, 200)
 
+    async def health_check(self, foreman_uuid):
+        # Ensure that the Foreman UUID matches the addressed one
+        url = f"{self.url}/api/settings?search=name%20%3D%20instance_id"
+        response = await self.request("GET", url, {})
+        status = sanitize_response(response, 200)
+        if status["error"]:
+            if status["status"] == -1:
+                return dict(
+                    result="error",
+                    message=f"Receptor could not connect to Satellite: {status['error']}",
+                    fifi_status=False,
+                    code=1
+                )
+            else:
+                return dict(
+                    result="error", message=f"Satellite error: {status['error']}",
+                    fifi_status=False, code=2
+                )
+        try:
+            gathered_foreman_uuid = status["body"]["results"][0]["value"]
+        except (IndexError, KeyError):
+            return dict(result="error", message="Could not verify Satellite UUID.",
+                        fifi_status=False, code=3)
+        else:
+            if foreman_uuid.lower() != gathered_foreman_uuid.lower():
+                return dict(
+                    result="error",
+                    message=f"Receptor is connected to Satellite {gathered_foreman_uuid}",
+                    fifi_status=False,
+                    code=4
+                )
+
+        # Ensure that the Foreman has at least one working smart proxy with Ansible
+        url = f"{self.url}/api/statuses"
+        response = await self.request("GET", url, {})
+        status = sanitize_response(response, 200)
+        if status["error"]:
+            if status["status"] == -1:
+                return dict(
+                    result="error",
+                    message=f"Receptor could not connect to Satellite: {status['error']}",
+                    fifi_status=False,
+                    code=1
+                )
+            else:
+                return dict(
+                    result="error", 
+                    message=f"Satellite error: {status['error']}",
+                    fifi_status=False, code=2
+                )
+        try:
+            ansible_proxies = [
+                sp
+                for sp in status["body"]["results"]["foreman"]["smart_proxies"]
+                if "ansible" in sp["features"]
+            ]
+        except KeyError:
+            return dict(
+                result="ok", 
+                message="Could not verify Smart Proxy status",
+                code=5,
+                fifi_status=False)
+        else:
+            if not ansible_proxies:
+                return dict(
+                    result="ok",
+                    message=f"Satellite does not have any Ansible enabled Smart Proxies",
+                    code=6,
+                    fifi_status=False
+                )
+            ok_proxies = [sp for sp in ansible_proxies if sp["status"] == "ok"]
+            if not ok_proxies:
+                return dict(
+                    result="ok", 
+                    message="Satellite Smart Proxies are offline",
+                    code=7,
+                    fifi_status=False
+                )
+
+        return dict(
+            result="ok", 
+            message="Satellite online and ready.",
+            fifi_status=True,
+            code=0
+        )
+
     async def request(self, method, url, extra_data):
         try:
             extra_data["ssl"] = self.context

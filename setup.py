@@ -21,4 +21,7 @@ setup(
     zip_safe=False,
     entry_points={"receptor.worker": "receptor_satellite = receptor_satellite.worker",},
     classifiers=["Programming Language :: Python :: 3",],
+    extras_require={
+        'dev': ['pytest', 'flake8', 'pylint', 'black']
+    }
 )
