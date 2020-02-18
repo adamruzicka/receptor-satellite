@@ -53,16 +53,18 @@ HEALTH_STATUS_RESULTS = {
 
 
 class SatelliteAPI:
-    def __init__(self, username, password, url, ca_file):
+    def __init__(self, username, password, url, ca_file, validate_cert=True):
         self.username = username
         self.password = password
         self.url = url
         self.context = None
         self.session = None
-        if url.startswith("https") and ca_file is not None:
+        if url.startswith("https"):
             self.context = ssl.SSLContext()
-            self.context.load_verify_locations(cafile=ca_file)
-            self.context.verify_mode = ssl.CERT_REQUIRED
+            if ca_file:
+                self.context.load_verify_locations(cafile=ca_file)
+            if validate_cert:
+                self.context.verify_mode = ssl.CERT_REQUIRED
 
     @classmethod
     def from_plugin_config(cls, plugin_config):
@@ -71,6 +73,7 @@ class SatelliteAPI:
             plugin_config["password"],
             plugin_config["url"],
             plugin_config.get("ca_file"),
+            plugin_config.get("validate_cert", True),
         )
 
     async def trigger(self, inputs, hosts):
@@ -103,50 +106,54 @@ class SatelliteAPI:
         return to_return
 
     async def health_check(self, foreman_uuid):
-        # Ensure that the Foreman UUID matches the addressed one
-        url = f"{self.url}/api/settings?search=name%20%3D%20instance_id"
-        response = await self.request("GET", url, {})
-        status = sanitize_response(response, 200)
-        if status["error"]:
-            if status["status"] == -1:
-                return self.health_check_response(HEALTH_NO_CONNECTION, status)
-            else:
-                return self.health_check_response(HEALTH_BAD_HTTP_STATUS, status)
+        await self.init_session()
         try:
-            gathered_foreman_uuid = status["body"]["results"][0]["value"]
-        except (IndexError, KeyError):
-            return self.health_check_response(HEALTH_UUID_UNKNOWN)
-        else:
-            if foreman_uuid.lower() != gathered_foreman_uuid.lower():
-                return self.health_check_response(
-                    HEALTH_UUID_MISMATCH, dict(uuid=gathered_foreman_uuid)
-                )
-
-        # Ensure that the Foreman has at least one working smart proxy with Ansible
-        url = f"{self.url}/api/statuses"
-        response = await self.request("GET", url, {})
-        status = sanitize_response(response, 200)
-        if status["error"]:
-            if status["status"] == -1:
-                return self.health_check_response(HEALTH_NO_CONNECTION, status)
+            # Ensure that the Foreman UUID matches the addressed one
+            url = f"{self.url}/api/settings?search=name%20%3D%20instance_id"
+            response = await self.request("GET", url, {})
+            status = sanitize_response(response, 200)
+            if status["error"]:
+                if status["status"] == -1:
+                    return self.health_check_response(HEALTH_NO_CONNECTION, status)
+                else:
+                    return self.health_check_response(HEALTH_BAD_HTTP_STATUS, status)
+            try:
+                gathered_foreman_uuid = status["body"]["results"][0]["value"]
+            except (IndexError, KeyError):
+                return self.health_check_response(HEALTH_UUID_UNKNOWN)
             else:
-                return self.health_check_response(HEALTH_BAD_HTTP_STATUS, status)
-        try:
-            ansible_proxies = [
-                sp
-                for sp in status["body"]["results"]["foreman"]["smart_proxies"]
-                if "ansible" in sp["features"]
-            ]
-        except KeyError:
-            return self.health_check_response(HEALTH_SP_UNKNOWN)
-        else:
-            if not ansible_proxies:
-                return self.health_check_response(HEALTH_SP_NO_ANSIBLE)
-            ok_proxies = [sp for sp in ansible_proxies if sp["status"] == "ok"]
-            if not ok_proxies:
-                return self.health_check_response(HEALTH_SP_OFFLINE)
+                if foreman_uuid.lower() != gathered_foreman_uuid.lower():
+                    return self.health_check_response(
+                        HEALTH_UUID_MISMATCH, dict(uuid=gathered_foreman_uuid)
+                    )
 
-        return self.health_check_response(HEALTH_OK)
+            # Ensure that the Foreman has at least one working smart proxy with Ansible
+            url = f"{self.url}/api/statuses"
+            response = await self.request("GET", url, {})
+            status = sanitize_response(response, 200)
+            if status["error"]:
+                if status["status"] == -1:
+                    return self.health_check_response(HEALTH_NO_CONNECTION, status)
+                else:
+                    return self.health_check_response(HEALTH_BAD_HTTP_STATUS, status)
+            try:
+                ansible_proxies = [
+                    sp
+                    for sp in status["body"]["results"]["foreman"]["smart_proxies"]
+                    if "ansible" in sp["features"]
+                ]
+            except KeyError:
+                return self.health_check_response(HEALTH_SP_UNKNOWN)
+            else:
+                if not ansible_proxies:
+                    return self.health_check_response(HEALTH_SP_NO_ANSIBLE)
+                ok_proxies = [sp for sp in ansible_proxies if sp["status"] == "ok"]
+                if not ok_proxies:
+                    return self.health_check_response(HEALTH_SP_OFFLINE)
+
+            return self.health_check_response(HEALTH_OK)
+        finally:
+            await self.close_session()
 
     async def request(self, method, url, extra_data):
         try:

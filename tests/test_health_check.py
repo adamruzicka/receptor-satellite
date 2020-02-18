@@ -16,6 +16,7 @@ from receptor_satellite.satellite_api import (
 )
 from constants import *
 
+
 logger = logging.getLogger(__name__)
 
 

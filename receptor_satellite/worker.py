@@ -177,9 +177,9 @@ def health_check(message, config, queue):
     try:
         payload = json.loads(message.raw_payload)
     except json.JSONDecodeError:
-        logger.exeception('Invalid JSON format for payload.')
+        logger.exception("Invalid JSON format for payload.")
         raise
-    
+
     api = SatelliteAPI.from_plugin_config(config)
-    result = asyncio.run(api.health_check(payload.get('foreman_uuid', '')))
+    result = asyncio.run(api.health_check(payload.get("foreman_uuid", "")))
     queue.put(result)
