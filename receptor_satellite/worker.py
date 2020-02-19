@@ -142,7 +142,7 @@ class Run:
         else:
             self.job_invocation_id = response["body"]["id"]
             self.logger.info(
-                f"Playbook run {self.playbook_run_id} running as job invocation {self.job_invocatino_id}"
+                f"Playbook run {self.playbook_run_id} running as job invocation {self.job_invocation_id}"
             )
             self.update_hosts(response["body"]["targeting"]["hosts"])
             await asyncio.gather(*[host.polling_loop() for host in self.hosts])
@@ -181,5 +181,5 @@ def health_check(message, config, queue):
         raise
 
     api = SatelliteAPI.from_plugin_config(config)
-    result = asyncio.run(api.health_check(payload.get("foreman_uuid", "")))
+    result = asyncio.run(api.health_check(payload.get("satellite_instance_id", "")))
     queue.put(result)

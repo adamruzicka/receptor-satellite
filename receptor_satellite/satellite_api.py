@@ -1,6 +1,7 @@
-import aiohttp
 import json
 import ssl
+
+import aiohttp
 
 
 HEALTH_CHECK_OK = "ok"
@@ -99,13 +100,14 @@ class SatelliteAPI:
         response = await self.request("GET", url, extra_data)
         return sanitize_response(response, 200)
 
-    def health_check_response(self, health_status, msg_context={}):
+    def health_check_response(self, health_status, msg_context=None):
         to_return = HEALTH_STATUS_RESULTS[health_status].copy()
         to_return["code"] = health_status
+        msg_context = msg_context or {}
         to_return["message"] = to_return["message"].format(**msg_context)
         return to_return
 
-    async def health_check(self, foreman_uuid):
+    async def health_check(self, satellite_instance_id):
         await self.init_session()
         try:
             # Ensure that the Foreman UUID matches the addressed one
@@ -115,17 +117,15 @@ class SatelliteAPI:
             if status["error"]:
                 if status["status"] == -1:
                     return self.health_check_response(HEALTH_NO_CONNECTION, status)
-                else:
-                    return self.health_check_response(HEALTH_BAD_HTTP_STATUS, status)
+                return self.health_check_response(HEALTH_BAD_HTTP_STATUS, status)
             try:
-                gathered_foreman_uuid = status["body"]["results"][0]["value"]
+                gathered_id = status["body"]["results"][0]["value"]
             except (IndexError, KeyError):
                 return self.health_check_response(HEALTH_UUID_UNKNOWN)
-            else:
-                if foreman_uuid.lower() != gathered_foreman_uuid.lower():
-                    return self.health_check_response(
-                        HEALTH_UUID_MISMATCH, dict(uuid=gathered_foreman_uuid)
-                    )
+            if satellite_instance_id.lower() != gathered_id.lower():
+                return self.health_check_response(
+                    HEALTH_UUID_MISMATCH, dict(uuid=gathered_id)
+                )
 
             # Ensure that the Foreman has at least one working smart proxy with Ansible
             url = f"{self.url}/api/statuses"

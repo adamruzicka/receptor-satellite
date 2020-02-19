@@ -14,13 +14,13 @@ from receptor_satellite.satellite_api import (
     HEALTH_SP_NO_ANSIBLE,
     HEALTH_SP_OFFLINE,
 )
-from constants import *
+from constants import * # noqa: F403
 
 
 logger = logging.getLogger(__name__)
 
 
-# error code, fifi_status, foreman_uuid, {url: response}
+# error code, satellite_instance_id, {url: response}
 TEST_CASES = [
     (
         HEALTH_NO_CONNECTION,
