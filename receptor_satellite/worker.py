@@ -189,5 +189,7 @@ def health_check(message, config, queue):
         )
     else:
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(api.health_check(payload.get("satellite_instance_id", "")))
+        result = loop.run_until_complete(
+            api.health_check(payload.get("satellite_instance_id", ""))
+        )
     queue.put(result)

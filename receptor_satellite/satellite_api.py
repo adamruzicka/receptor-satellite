@@ -18,7 +18,7 @@ HEALTH_UNCONFIGURED = 8
 
 HEALTH_STATUS_RESULTS = {
     HEALTH_OK: dict(
-        result=HEALTH_CHECK_OK, fifi_status=True, message="Satellite online and ready",
+        result=HEALTH_CHECK_OK, fifi_status=True, message="Satellite online and ready"
     ),
     HEALTH_NO_CONNECTION: dict(
         result=HEALTH_CHECK_ERROR,
