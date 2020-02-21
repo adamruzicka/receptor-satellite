@@ -113,7 +113,8 @@ def scenario(request):
 
 def test_health_check(scenario):
     status_code, uuid, api = scenario
-    response = asyncio.run(api.health_check(uuid))
+    loop = asyncio.new_event_loop()
+    response = loop.run_until_complete(api.health_check(uuid))
     status_result = HEALTH_STATUS_RESULTS[status_code]
     assert response["code"] == status_code
     assert response["fifi_status"] == status_result["fifi_status"]
