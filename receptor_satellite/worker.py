@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 
-from .satellite_api import SatelliteAPI
+from .satellite_api import SatelliteAPI, HEALTH_CHECK_ERROR, HEALTH_STATUS_RESULTS
 from .response_queue import ResponseQueue
 from .run_monitor import run_monitor
 
@@ -168,7 +168,8 @@ def execute(message, config, queue):
     logger = configure_logger()
     queue = ResponseQueue(queue)
     payload = json.loads(message.raw_payload)
-    asyncio.run(Run.from_raw(queue, payload, config, logger).start())
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(Run.from_raw(queue, payload, config, logger).start())
 
 
 @receptor_export
@@ -180,6 +181,13 @@ def health_check(message, config, queue):
         logger.exception("Invalid JSON format for payload.")
         raise
 
-    api = SatelliteAPI.from_plugin_config(config)
-    result = asyncio.run(api.health_check(payload.get("satellite_instance_id", "")))
+    try:
+        api = SatelliteAPI.from_plugin_config(config)
+    except KeyError:
+        result = dict(
+            result=HEALTH_CHECK_ERROR, **HEALTH_STATUS_RESULTS[HEALTH_CHECK_ERROR]
+        )
+    else:
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(api.health_check(payload.get("satellite_instance_id", "")))
     queue.put(result)

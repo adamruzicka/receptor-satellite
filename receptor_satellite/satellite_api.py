@@ -14,6 +14,7 @@ HEALTH_UUID_MISMATCH = 4
 HEALTH_SP_UNKNOWN = 5
 HEALTH_SP_NO_ANSIBLE = 6
 HEALTH_SP_OFFLINE = 7
+HEALTH_UNCONFIGURED = 8
 
 HEALTH_STATUS_RESULTS = {
     HEALTH_OK: dict(
@@ -50,6 +51,11 @@ HEALTH_STATUS_RESULTS = {
     HEALTH_SP_OFFLINE: dict(
         result=HEALTH_CHECK_OK, fifi_status=False, message="Smart Proxies are offline"
     ),
+    HEALTH_UNCONFIGURED: dict(
+        result=HEALTH_CHECK_ERROR,
+        fifi_status=False,
+        message="Satellite plugin not fully configured on Receptor.",
+    ),
 }
 
 
@@ -67,14 +73,17 @@ class SatelliteAPI:
             if validate_cert:
                 self.context.verify_mode = ssl.CERT_REQUIRED
 
+    FALSE_VALUES = ["false", "no", "0", ""]
+
     @classmethod
     def from_plugin_config(cls, plugin_config):
+        validate_cert = plugin_config.get("validate_cert")
         return cls(
             plugin_config["username"],
             plugin_config["password"],
             plugin_config["url"],
             plugin_config.get("ca_file"),
-            plugin_config.get("validate_cert", True),
+            False if validate_cert in cls.FALSE_VALUES else True,
         )
 
     async def trigger(self, inputs, hosts):

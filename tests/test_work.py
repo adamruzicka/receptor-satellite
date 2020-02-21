@@ -29,7 +29,7 @@ def test_health_check_task():
         password=os.environ.get("SATELLITE_PASSWORD"),
         url=os.environ.get("SATELLITE_URL"),
         ca_cert=None,
-        validate_cert=False,
+        validate_cert='0',
     )
     worker.health_check(message, config, q)
     result = q.get()
