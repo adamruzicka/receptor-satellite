@@ -14,7 +14,7 @@ from receptor_satellite.satellite_api import (
     HEALTH_SP_NO_ANSIBLE,
     HEALTH_SP_OFFLINE,
 )
-from constants import * # noqa: F403
+from constants import *  # noqa: F403
 
 
 logger = logging.getLogger(__name__)

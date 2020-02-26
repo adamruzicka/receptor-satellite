@@ -17,9 +17,9 @@ setup(
     packages=find_packages(),
     long_description=long_description,
     long_description_content_type="text/markdown",
-    install_requires=["aiohttp",],
+    install_requires=["aiohttp"],
     zip_safe=False,
-    entry_points={"receptor.worker": "receptor_satellite = receptor_satellite.worker",},
-    classifiers=["Programming Language :: Python :: 3",],
+    entry_points={"receptor.worker": "receptor_satellite = receptor_satellite.worker"},
+    classifiers=["Programming Language :: Python :: 3"],
     extras_require={"dev": ["pytest", "flake8", "pylint", "black"]},
 )
