@@ -16,7 +16,11 @@ class RunMonitor:
 
     async def done(self, run):
         async with self.__lock:
-            self.__runs[run.playbook_run_id] = None
+            self.__runs[run.playbook_run_id] = True
+
+    async def get(self, playbook_run_id):
+        async with self.__lock:
+            return self.__runs.get(playbook_run_id)
 
 
 run_monitor = RunMonitor()

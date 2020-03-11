@@ -25,3 +25,12 @@ class ResponseQueue:
                 "status": "success" if success else "failure",
             }
         )
+
+    def playbook_run_cancel_ack(self, playbook_run_id, status):
+        self.queue.put(
+            {
+                "type": "playbook_run_cancel_ack",
+                "playbook_run_id": playbook_run_id,
+                "status": status,
+            }
+        )

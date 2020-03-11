@@ -128,26 +128,29 @@ class Run:
 
     async def start(self):
         await self.satellite_api.init_session()
-        if not await run_monitor.register(self):
-            self.logger.info(
-                f"Playbook run {self.playbook_run_id} already known, skipping."
+        try:
+            if not await run_monitor.register(self):
+                self.logger.error(
+                    f"Playbook run {self.playbook_run_id} already known, skipping."
+                )
+                return
+            response = await self.satellite_api.trigger(
+                {"playbook": self.playbook}, [host.name for host in self.hosts]
             )
-            return
-        response = await self.satellite_api.trigger(
-            {"playbook": self.playbook}, [host.name for host in self.hosts]
-        )
-        self.queue.ack(self.playbook_run_id)
-        if response["error"]:
-            self.abort(response["error"])
-        else:
-            self.job_invocation_id = response["body"]["id"]
-            self.logger.info(
-                f"Playbook run {self.playbook_run_id} running as job invocation {self.job_invocation_id}"
-            )
-            self.update_hosts(response["body"]["targeting"]["hosts"])
-            await asyncio.gather(*[host.polling_loop() for host in self.hosts])
-        await asyncio.gather(run_monitor.done(self), self.satellite_api.close_session())
-        self.logger.info(f"Playbook run {self.playbook_run_id} done")
+            self.queue.ack(self.playbook_run_id)
+            if response["error"]:
+                self.abort(response["error"])
+            else:
+                self.job_invocation_id = response["body"]["id"]
+                self.logger.info(
+                    f"Playbook run {self.playbook_run_id} running as job invocation {self.job_invocation_id}"
+                )
+                self.update_hosts(response["body"]["targeting"]["hosts"])
+                await asyncio.gather(*[host.polling_loop() for host in self.hosts])
+            await run_monitor.done(self)
+            self.logger.info(f"Playbook run {self.playbook_run_id} done")
+        finally:
+            await self.satellite_api.close_session()
 
     def update_hosts(self, hosts):
         host_map = {host.name: host for host in self.hosts}
@@ -163,13 +166,47 @@ class Run:
             host.mark_as_failed(error)
 
 
+async def cancel_run(satellite_api, run_id, queue, logger):
+    logger.info(f"Cancelling playbook run {run_id}")
+    run = await run_monitor.get(run_id)
+    status = None
+    if run is True:
+        logger.info(f"Playbook run {run_id} is already finished")
+        status = "finished"
+    elif run is None:
+        logger.info(f"Playbook run {run_id} is not known by receptor")
+        status = "failure"
+    else:
+        await satellite_api.init_session()
+        response = await satellite_api.cancel(run_id)
+        await satellite_api.close_session()
+        if response["status"] == 422:
+            status = "finished"
+        else:
+            status = "cancelling"
+    queue.playbook_run_cancel_ack(run_id, status)
+
+
+def run(coroutine):
+    loop = asyncio.new_event_loop()
+    return loop.run_until_complete(coroutine)
+
+
 @receptor_export
 def execute(message, config, queue):
     logger = configure_logger()
     queue = ResponseQueue(queue)
     payload = json.loads(message.raw_payload)
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(Run.from_raw(queue, payload, config, logger).start())
+    run(Run.from_raw(queue, payload, config, logger).start())
+
+
+@receptor_export
+def cancel(message, config, queue):
+    logger = configure_logger()
+    queue = ResponseQueue(queue)
+    satellite_api = SatelliteAPI.from_plugin_config(config)
+    payload = json.loads(message.raw_payload)
+    run(cancel_run(satellite_api, payload.get("playbook_run_id"), queue, logger))
 
 
 @receptor_export
@@ -188,8 +225,5 @@ def health_check(message, config, queue):
             result=HEALTH_CHECK_ERROR, **HEALTH_STATUS_RESULTS[HEALTH_CHECK_ERROR]
         )
     else:
-        loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(
-            api.health_check(payload.get("satellite_instance_id", ""))
-        )
+        result = run(api.health_check(payload.get("satellite_instance_id", "")))
     queue.put(result)

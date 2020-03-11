@@ -97,7 +97,7 @@ class SatelliteAPI:
         url = f"{self.url}/api/v2/job_invocations"
         extra_data = {"json": payload, "headers": {"Content-Type": "application/json"}}
         response = await self.request("POST", url, extra_data)
-        return sanitize_response(response, 201)
+        return sanitize_response(response, [201])
 
     async def output(self, job_invocation_id, host_id, since):
         url = "{}/api/v2/job_invocations/{}/hosts/{}".format(
@@ -107,7 +107,12 @@ class SatelliteAPI:
         if since is not None:
             extra_data["params"] = {"since": str(since)}
         response = await self.request("GET", url, extra_data)
-        return sanitize_response(response, 200)
+        return sanitize_response(response, [200])
+
+    async def cancel(self, job_invocation_id):
+        url = f"{self.url}/api/v2/job_invocations/{job_invocation_id}/cancel"
+        response = await self.request("POST", url, {})
+        return sanitize_response(response, [200, 422])
 
     def health_check_response(self, health_status, msg_context=None):
         to_return = HEALTH_STATUS_RESULTS[health_status].copy()
@@ -122,7 +127,7 @@ class SatelliteAPI:
             # Ensure that the Foreman UUID matches the addressed one
             url = f"{self.url}/api/settings?search=name%20%3D%20instance_id"
             response = await self.request("GET", url, {})
-            status = sanitize_response(response, 200)
+            status = sanitize_response(response, [200])
             if status["error"]:
                 if status["status"] == -1:
                     return self.health_check_response(HEALTH_NO_CONNECTION, status)
@@ -139,7 +144,7 @@ class SatelliteAPI:
             # Ensure that the Foreman has at least one working smart proxy with Ansible
             url = f"{self.url}/api/statuses"
             response = await self.request("GET", url, {})
-            status = sanitize_response(response, 200)
+            status = sanitize_response(response, [200])
             if status["error"]:
                 if status["status"] == -1:
                     return self.health_check_response(HEALTH_NO_CONNECTION, status)
@@ -183,9 +188,9 @@ class SatelliteAPI:
         self.session = None
 
 
-def sanitize_response(response, expected_status):
+def sanitize_response(response, expected_statuses):
     if not response["error"]:
         response["body"] = json.loads(response["body"])
-        if response["status"] != expected_status:
+        if not response["status"] in expected_statuses:
             response["error"] = response["body"]["error"]["message"]
     return response
