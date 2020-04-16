@@ -164,6 +164,7 @@ class Run:
         ]
         self.satellite_api = satellite_api
         self.logger = logger
+        self.job_invocation_id = None
 
     @classmethod
     def from_raw(cls, queue, raw, satellite_api, logger):
@@ -231,12 +232,14 @@ async def cancel_run(satellite_api, run_id, queue, logger):
         status = "failure"
     else:
         await satellite_api.init_session()
-        response = await satellite_api.cancel(run_id)
+        response = await satellite_api.cancel(run.job_invocation_id)
         await satellite_api.close_session()
         if response["status"] == 422:
             status = "finished"
-        else:
+        elif response["status"] == 200:
             status = "cancelling"
+        else:
+            status = "failure"
     queue.playbook_run_cancel_ack(run_id, status)
 
 

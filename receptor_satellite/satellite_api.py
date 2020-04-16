@@ -111,7 +111,9 @@ class SatelliteAPI:
 
     async def cancel(self, job_invocation_id):
         url = f"{self.url}/api/v2/job_invocations/{job_invocation_id}/cancel"
-        response = await self.request("POST", url, {})
+        response = await self.request(
+            "POST", url, {"headers": {"Content-Type": "application/json"}}
+        )
         return sanitize_response(response, [200, 422])
 
     def health_check_response(self, health_status, msg_context=None):
