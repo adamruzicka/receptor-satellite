@@ -21,12 +21,25 @@ def configure_logger():
     return logger
 
 
+def validate(condition, value, default_value, error, logger):
+    if condition(value):
+        return value
+    else:
+        logger.warning(error)
+        return default_value
+
+
 class Config:
-    def __init__(
-        self, text_updates=False, text_update_interval=5000, text_update_full=True
-    ):
+    class Defaults:
+        TEXT_UPDATES = False
+        TEXT_UPDATE_INTERVAL = 5000
+        TEXT_UPDATE_FULL = True
+
+    def __init__(self, text_updates, text_update_interval, text_update_full):
         self.text_updates = text_updates
-        self.text_update_interval = text_update_interval
+        self.text_update_interval = (
+            text_update_interval // 1000
+        )  # Store the interval in seconds
         self.text_update_full = text_update_full
 
     @classmethod
@@ -34,6 +47,38 @@ class Config:
         return cls(
             raw["text_updates"], raw["text_update_interval"], raw["text_update_full"]
         )
+
+    @classmethod
+    def validate_input(_cls, raw, logger):
+        text_updates = raw.get("text_updates", Config.Defaults.TEXT_UPDATES)
+        text_update_interval = raw.get(
+            "text_update_interval", Config.Defaults.TEXT_UPDATE_INTERVAL
+        )
+        text_update_full = raw.get("text_update_full", Config.Defaults.TEXT_UPDATE_FULL)
+
+        validated = {}
+        validated["text_updates"] = validate(
+            lambda val: type(val) == bool,
+            text_updates,
+            Config.Defaults.TEXT_UPDATES,
+            f"Expected the value of text_updates '{text_updates}' to be a boolean",
+            logger,
+        )
+        validated["text_update_full"] = validate(
+            lambda val: type(val) == bool,
+            text_update_full,
+            Config.Defaults.TEXT_UPDATE_FULL,
+            f"Expected the value of text_update_full '{text_update_full}' to be a boolean",
+            logger,
+        )
+        validated["text_update_interval"] = validate(
+            lambda val: type(val) == int and val >= 5000,
+            text_update_interval,
+            Config.Defaults.TEXT_UPDATE_INTERVAL,
+            f"Expected the value of text_update_interval '{text_update_interval}' to be an integer greater or equal than 5000",
+            logger,
+        )
+        return validated
 
 
 class Host:
@@ -78,7 +123,7 @@ class Host:
     async def poll_with_retries(self):
         retry = 0
         while retry < 5:
-            await asyncio.sleep(self.run.config.text_update_interval / 1000)
+            await asyncio.sleep(self.run.config.text_update_interval)
             response = await self.run.satellite_api.output(
                 self.run.job_invocation_id, self.id, self.since
             )
@@ -99,7 +144,7 @@ class Run:
         hosts,
         playbook,
         config,
-        plugin_config,
+        satellite_api,
         logger,
     ):
         self.queue = queue
@@ -107,13 +152,21 @@ class Run:
         self.playbook_run_id = playbook_run_id
         self.account = account
         self.playbook = playbook
-        self.config = Config.from_raw(config)
-        self.hosts = [Host(self, None, name) for name in hosts]
-        self.satellite_api = SatelliteAPI.from_plugin_config(plugin_config)
+        self.config = Config.from_raw(Config.validate_input(config, logger))
+
+        unsafe_hostnames = [name for name in hosts if "," in name]
+        for name in unsafe_hostnames:
+            logger.warning(f"Hostname '{name}' contains a comma, skipping")
+            Host(self, None, name).mark_as_failed("Hostname contains a comma, skipping")
+
+        self.hosts = [
+            Host(self, None, name) for name in hosts if name not in unsafe_hostnames
+        ]
+        self.satellite_api = satellite_api
         self.logger = logger
 
     @classmethod
-    def from_raw(cls, queue, raw, plugin_config, logger):
+    def from_raw(cls, queue, raw, satellite_api, logger):
         return cls(
             queue,
             raw["remediation_id"],
@@ -122,7 +175,7 @@ class Run:
             raw["hosts"],
             raw["playbook"],
             raw["config"],
-            plugin_config,
+            satellite_api,
             logger,
         )
 
@@ -197,7 +250,8 @@ def execute(message, config, queue):
     logger = configure_logger()
     queue = ResponseQueue(queue)
     payload = json.loads(message.raw_payload)
-    run(Run.from_raw(queue, payload, config, logger).start())
+    satellite_api = SatelliteAPI.from_plugin_config(config["plugin_config"])
+    run(Run.from_raw(queue, payload, config, satellite_api, logger).start())
 
 
 @receptor_export
