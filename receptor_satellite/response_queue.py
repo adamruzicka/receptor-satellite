@@ -1,4 +1,8 @@
 class ResponseQueue:
+    RESULT_SUCCESS = "success"
+    RESULT_FAILURE = "failure"
+    RESULT_CANCEL = "canceled"
+
     def __init__(self, queue):
         self.queue = queue
 
@@ -16,13 +20,13 @@ class ResponseQueue:
             }
         )
 
-    def playbook_run_finished(self, host, playbook_run_id, success=True):
+    def playbook_run_finished(self, host, playbook_run_id, result=RESULT_SUCCESS):
         self.queue.put(
             {
                 "type": "playbook_run_finished",
                 "playbook_run_id": playbook_run_id,
                 "host": host,
-                "status": "success" if success else "failure",
+                "status": result,
             }
         )
 
