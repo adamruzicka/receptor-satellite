@@ -114,31 +114,35 @@ def test_mark_as_failed(base_scenario):
     ]
 
 
-# (host_id, output_value, result, api_requests, queue_messages
+class PollWithRetriesTestCase:
+    def __init__(
+        self,
+        host_id=1,
+        api_output=None,
+        result=None,
+        api_requests=[],
+        queue_messages=[],
+    ):
+        self.host_id = host_id
+        self.api_output = api_output
+        self.result = result
+        self.api_requests = api_requests
+        self.queue_messages = queue_messages
+
+
 POLL_WITH_RETRIES_TEST_CASES = [
     # Polling loop does not loop if there is no error when talking to
     # the API
-    (
-        1,
-        {"error": None, "key": "value"},
-        {"error": None, "key": "value"},
-        [("output", (None, 1, None))],
-        [],
+    PollWithRetriesTestCase(
+        result={"error": None, "key": "value"},
+        api_output={"error": None, "key": "value"},
+        api_requests=[("output", (None, 1, None))],
     ),
-    # Polling loop polls 5 times if response contains an error and
-    # marks the host as failed afterwards
-    (
-        1,
-        {"error": "controlled failure"},
-        {"error": True},
-        [
-            ("output", (None, 1, None)),
-            ("output", (None, 1, None)),
-            ("output", (None, 1, None)),
-            ("output", (None, 1, None)),
-            ("output", (None, 1, None)),
-        ],
-        [
+    PollWithRetriesTestCase(
+        result={"error": True},
+        api_output={"error": "controlled failure"},
+        api_requests=[("output", (None, 1, None)) for _x in range(5)],
+        queue_messages=[
             {
                 "type": "playbook_run_update",
                 "playbook_run_id": "play_id",
@@ -159,44 +163,39 @@ POLL_WITH_RETRIES_TEST_CASES = [
 
 @pytest.fixture(params=POLL_WITH_RETRIES_TEST_CASES)
 def poll_with_retries_scenario(request, base_scenario):
-    host_id, output_value, result, api_requests, queue_messages = request.param
+    # host_id, output_value, result, api_requests, queue_messages = request.param
+    param = request.param
     queue, logger, satellite_api, run = base_scenario
-    host = Host(run, host_id, "host1")
+    host = Host(run, param.host_id, "host1")
 
-    yield (queue, host, output_value, result, api_requests, queue_messages)
+    yield (queue, host, param)
 
 
 @pytest.mark.asyncio
 async def test_poll_with_retries(poll_with_retries_scenario):
-    (
-        queue,
-        host,
-        output_value,
-        expected_result,
-        api_requests,
-        queue_messages,
-    ) = poll_with_retries_scenario
+    (queue, host, param,) = poll_with_retries_scenario
     satellite_api = host.run.satellite_api
-    satellite_api.real_output = lambda j, h, s: output_value
+    satellite_api.real_output = lambda j, h, s: param.api_output
 
     result = await host.poll_with_retries()
 
-    assert result == expected_result
-    assert satellite_api.requests == api_requests
-    assert queue.messages == queue_messages
+    assert result == param.result
+    assert satellite_api.requests == param.api_requests
+    assert queue.messages == param.queue_messages
 
 
-# (host_id, run_cancelled, api_output, expected_result, api_requests, queue_messages)
+class PollingLoopTestCase(PollWithRetriesTestCase):
+    def __init__(self, cancelled=False, **kwargs):
+        super().__init__(**kwargs)
+        self.cancelled = cancelled
+
+
 POLLING_LOOP_TEST_CASES = [
     # If the host doesn't have an ID, it is assumed to be not known by
     # Satellite and is marked as failed
-    (
-        None,
-        False,
-        None,
-        None,
-        [],
-        [
+    PollingLoopTestCase(
+        host_id=None,
+        queue_messages=[
             {
                 "type": "playbook_run_update",
                 "playbook_run_id": "play_id",
@@ -214,19 +213,10 @@ POLLING_LOOP_TEST_CASES = [
     ),
     # If the polling loop receives an error from the API, it marks the
     # host as failed
-    (
-        1,
-        False,
-        {"error": "controlled failure"},
-        None,
-        [
-            ("output", (None, 1, None)),
-            ("output", (None, 1, None)),
-            ("output", (None, 1, None)),
-            ("output", (None, 1, None)),
-            ("output", (None, 1, None)),
-        ],
-        [
+    PollingLoopTestCase(
+        api_output={"error": "controlled failure"},
+        api_requests=[("output", (None, 1, None)) for _x in range(5)],
+        queue_messages=[
             {
                 "type": "playbook_run_update",
                 "playbook_run_id": "play_id",
@@ -244,16 +234,13 @@ POLLING_LOOP_TEST_CASES = [
     ),
     # If the last output from the API ends with Exit status: 0, mark
     # the run on the host as success
-    (
-        1,
-        False,
-        {
+    PollingLoopTestCase(
+        api_output={
             "error": None,
             "body": {"complete": True, "output": [{"output": "Exit status: 0"}]},
         },
-        None,
-        [("output", (None, 1, None))],
-        [
+        api_requests=[("output", (None, 1, None))],
+        queue_messages=[
             {
                 "type": "playbook_run_update",
                 "playbook_run_id": "play_id",
@@ -271,16 +258,14 @@ POLLING_LOOP_TEST_CASES = [
     ),
     # If the run was cancelled, but the host managed to finish
     # successfully, mark it as success
-    (
-        1,
-        True,
-        {
+    PollingLoopTestCase(
+        cancelled=True,
+        api_output={
             "error": None,
             "body": {"complete": True, "output": [{"output": "Exit status: 0"}]},
         },
-        None,
-        [("output", (None, 1, None))],
-        [
+        api_requests=[("output", (None, 1, None))],
+        queue_messages=[
             {
                 "type": "playbook_run_update",
                 "playbook_run_id": "play_id",
@@ -297,16 +282,13 @@ POLLING_LOOP_TEST_CASES = [
         ],
     ),
     # If the host failed, mark it as failed
-    (
-        1,
-        False,
-        {
+    PollingLoopTestCase(
+        api_output={
             "error": None,
             "body": {"complete": True, "output": [{"output": "Exit status: 123"}]},
         },
-        None,
-        [("output", (None, 1, None))],
-        [
+        api_requests=[("output", (None, 1, None))],
+        queue_messages=[
             {
                 "type": "playbook_run_update",
                 "playbook_run_id": "play_id",
@@ -324,16 +306,14 @@ POLLING_LOOP_TEST_CASES = [
     ),
     # If the run was cancelled and the run on the host failed, mark it
     # as cancelled
-    (
-        1,
-        True,
-        {
+    PollingLoopTestCase(
+        cancelled=True,
+        api_output={
             "error": None,
             "body": {"complete": True, "output": [{"output": "Exit status: 123"}]},
         },
-        None,
-        [("output", (None, 1, None))],
-        [
+        api_requests=[("output", (None, 1, None))],
+        queue_messages=[
             {
                 "type": "playbook_run_update",
                 "playbook_run_id": "play_id",
@@ -354,34 +334,19 @@ POLLING_LOOP_TEST_CASES = [
 
 @pytest.fixture(params=POLLING_LOOP_TEST_CASES)
 def polling_loop_scenario(request, base_scenario):
-    (
-        host_id,
-        run_cancelled,
-        output_value,
-        result,
-        api_requests,
-        queue_messages,
-    ) = request.param
     queue, logger, satellite_api, run = base_scenario
-    run.cancelled = run_cancelled
-    host = Host(run, host_id, "host1")
+    run.cancelled = request.param.cancelled
+    host = Host(run, request.param.host_id, "host1")
 
-    yield (queue, host, output_value, result, api_requests, queue_messages)
+    yield (queue, host, request.param)
 
 
 @pytest.mark.asyncio
 async def test_polling_loop(polling_loop_scenario):
-    (
-        queue,
-        host,
-        output_value,
-        expected_result,
-        api_requests,
-        queue_messages,
-    ) = polling_loop_scenario
+    (queue, host, param,) = polling_loop_scenario
     satellite_api = host.run.satellite_api
-    satellite_api.real_output = lambda j, h, s: output_value
+    satellite_api.real_output = lambda j, h, s: param.api_output
     result = await host.polling_loop()
-    assert result == expected_result
-    assert satellite_api.requests == api_requests
-    assert queue.messages == queue_messages
+    assert result == param.result
+    assert satellite_api.requests == param.api_requests
+    assert queue.messages == param.queue_messages
