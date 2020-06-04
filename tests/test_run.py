@@ -85,7 +85,7 @@ def base_scenario(request):
         "account_no",
         ["host1"],
         "playbook",
-        Config(),
+        {},
         satellite_api,
         logger,
     )
