@@ -48,7 +48,9 @@ class Host:
         queue = self.run.queue
         playbook_run_id = self.run.playbook_run_id
         queue.playbook_run_update(self.name, playbook_run_id, message, self.sequence)
-        queue.playbook_run_finished(self.name, playbook_run_id, False)
+        queue.playbook_run_finished(
+            self.name, playbook_run_id, ResponseQueue.RESULT_FAILURE
+        )
 
     async def polling_loop(self):
         last_output = ""
@@ -68,10 +70,13 @@ class Host:
                 )
                 self.sequence += 1
             if body["complete"]:
+                result = ResponseQueue.RESULT_FAILURE
+                if last_output.endswith("Exit status: 0"):
+                    result = ResponseQueue.RESULT_SUCCESS
+                elif self.run.cancelled:
+                    result = ResponseQueue.RESULT_CANCEL
                 self.run.queue.playbook_run_finished(
-                    self.name,
-                    self.run.playbook_run_id,
-                    last_output.endswith("Exit status: 0"),
+                    self.name, self.run.playbook_run_id, result
                 )
                 break
 
@@ -99,7 +104,7 @@ class Run:
         hosts,
         playbook,
         config,
-        plugin_config,
+        satellite_api,
         logger,
     ):
         self.queue = queue
@@ -107,10 +112,12 @@ class Run:
         self.playbook_run_id = playbook_run_id
         self.account = account
         self.playbook = playbook
-        self.config = Config.from_raw(config)
+        self.config = config
         self.hosts = [Host(self, None, name) for name in hosts]
-        self.satellite_api = SatelliteAPI.from_plugin_config(plugin_config)
+        self.satellite_api = satellite_api
         self.logger = logger
+        self.job_invocation_id = None
+        self.cancelled = False
 
     @classmethod
     def from_raw(cls, queue, raw, plugin_config, logger):
@@ -121,8 +128,8 @@ class Run:
             raw["account"],
             raw["hosts"],
             raw["playbook"],
-            raw["config"],
-            plugin_config,
+            Config.from_raw(raw["config"]),
+            SatelliteAPI.from_plugin_config(plugin_config),
             logger,
         )
 
@@ -172,18 +179,21 @@ async def cancel_run(satellite_api, run_id, queue, logger):
     status = None
     if run is True:
         logger.info(f"Playbook run {run_id} is already finished")
-        status = "finished"
+        status = ResponseQueue.CANCEL_RESULT_FINISHED
     elif run is None:
         logger.info(f"Playbook run {run_id} is not known by receptor")
-        status = "failure"
+        status = ResponseQueue.CANCEL_RESULT_FAILURE
     else:
         await satellite_api.init_session()
-        response = await satellite_api.cancel(run_id)
+        response = await satellite_api.cancel(run.job_invocation_id)
+        run.cancelled = True
         await satellite_api.close_session()
         if response["status"] == 422:
-            status = "finished"
+            status = ResponseQueue.CANCEL_RESULT_FINISHED
+        elif response["status"] == 200:
+            status = ResponseQueue.CANCEL_RESULT_CANCELLING
         else:
-            status = "cancelling"
+            status = ResponseQueue.CANCEL_RESULT_FAILURE
     queue.playbook_run_cancel_ack(run_id, status)
 
 
