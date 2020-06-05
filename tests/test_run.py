@@ -8,8 +8,9 @@ async def _sleep_override(interval):
 
 asyncio.sleep = _sleep_override
 
-from receptor_satellite.worker import Config, Host, Run  # noqa: E402
+from receptor_satellite.worker import Host, Run  # noqa: E402
 from receptor_satellite.response_queue import ResponseQueue  # noqa: E402
+from fake_logger import FakeLogger  # noqa: E402
 
 
 class FakeQueue:
@@ -18,14 +19,6 @@ class FakeQueue:
 
     def put(self, message):
         self.messages.append(message)
-
-
-class FakeLogger:
-    def __init__(self):
-        self.errors = []
-
-    def error(self, message):
-        self.errors.append(message)
 
 
 class FakeSatelliteAPI:
@@ -55,7 +48,7 @@ def base_scenario(request):
         "account_no",
         ["host1"],
         "playbook",
-        Config(),
+        {},
         satellite_api,
         logger,
     )
@@ -320,3 +313,39 @@ async def test_polling_loop(polling_loop_scenario):
     assert result == param.result
     assert satellite_api.requests == param.api_requests
     assert queue.messages == param.queue_messages
+
+
+def test_hostname_sanity():
+    hosts = ["good", "fine", "not,really,good", "ok"]
+    logger = FakeLogger()
+    fake_queue = FakeQueue()
+    playbook_id = "play_id"
+
+    run = Run(
+        ResponseQueue(fake_queue),
+        "rem_id",
+        playbook_id,
+        "acc_num",
+        hosts,
+        "playbook",
+        {},
+        None,  # No need for SatelliteAPI in this test
+        logger,
+    )
+    assert logger.warnings == ["Hostname 'not,really,good' contains a comma, skipping"]
+    assert fake_queue.messages == [
+        {
+            "type": "playbook_run_update",
+            "playbook_run_id": playbook_id,
+            "sequence": 0,
+            "host": "not,really,good",
+            "console": "Hostname contains a comma, skipping",
+        },
+        {
+            "type": "playbook_run_finished",
+            "playbook_run_id": playbook_id,
+            "host": "not,really,good",
+            "status": "failure",
+        },
+    ]
+    assert list(map(lambda h: h.name, run.hosts)) == ["good", "fine", "ok"]
