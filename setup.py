@@ -10,7 +10,7 @@ with open("README.md", "r") as f:
 
 setup(
     name="receptor-satellite",
-    version="1.0.1",
+    version="1.0.2",
     author="Red Hat Ansible",
     url="https://github.com/adamruzicka/receptor-satellite",
     license="Apache",
