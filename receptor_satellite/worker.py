@@ -88,6 +88,7 @@ class Host:
         self.name = name
         self.sequence = 0
         self.since = None if run.config.text_update_full else 0.0
+        self.result = None
 
     def mark_as_failed(self, message):
         queue = self.run.queue
@@ -123,6 +124,7 @@ class Host:
                 self.run.queue.playbook_run_finished(
                     self.name, self.run.playbook_run_id, result
                 )
+                self.result = result
                 break
 
     async def poll_with_retries(self):
@@ -207,6 +209,14 @@ class Run:
                 )
                 self.update_hosts(response["body"]["targeting"]["hosts"])
                 await asyncio.gather(*[host.polling_loop() for host in self.hosts])
+                result = constants.RESULT_FAILURE
+                if self.cancelled:
+                    result = constants.RESULT_CANCEL
+                elif all(
+                    host.result == constants.RESULT_SUCCESS for host in self.hosts
+                ):
+                    result = constants.RESULT_SUCCESS
+                self.queue.playbook_run_completed(self.playbook_run_id, result)
             await run_monitor.done(self)
             self.logger.info(f"Playbook run {self.playbook_run_id} done")
         finally:
@@ -224,6 +234,10 @@ class Run:
         )
         for host in self.hosts:
             host.mark_as_failed(error)
+        # TODO: Do not pass the error string verbatim?
+        self.queue.playbook_run_completed(
+            self.playbook_run_id, constants.RESULT_FAILURE, connection_error=error
+        )
 
 
 async def cancel_run(satellite_api, run_id, queue, logger):

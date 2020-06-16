@@ -7,6 +7,7 @@ async def _sleep_override(interval):
 
 
 asyncio.sleep = _sleep_override
+from receptor_satellite.run_monitor import run_monitor  # noqa: E402
 from receptor_satellite.worker import Host, Run  # noqa: E402
 from receptor_satellite.response.response_queue import ResponseQueue  # noqa: E402
 import receptor_satellite.response.constants as constants  # noqa: E402
@@ -283,3 +284,83 @@ def test_hostname_sanity():
         ),
     ]
     assert list(map(lambda h: h.name, run.hosts)) == ["good", "fine", "ok"]
+
+
+START_TEST_CASES = [
+    # (api_responses, expected_api_requests, expected_queue_messages, expected_logger_messages)
+    (
+        [{"error": "Something broke"}],
+        [("trigger", ({"playbook": "playbook"}, ["host1"]))],
+        [
+            messages.ack("play_id"),
+            messages.playbook_run_update("host1", "play_id", "Something broke", 0),
+            messages.playbook_run_finished(
+                "host1", "play_id", constants.RESULT_FAILURE
+            ),
+            messages.playbook_run_completed(
+                "play_id",
+                constants.RESULT_FAILURE,
+                connection_code=1,
+                connection_error="Something broke",
+                infrastructure_code=None,
+            ),
+        ],
+        FakeLogger()
+        .error("Playbook run play_id encountered error `Something broke`, aborting.")
+        .info("Playbook run play_id done")
+        .messages,
+    ),
+    (
+        [
+            dict(
+                body={"id": 123, "targeting": {"hosts": [{"name": "host1", "id": 5}]}},
+                error=None,
+            ),
+            dict(
+                body={"output": [{"output": "Exit status: 0"}], "complete": True},
+                error=None,
+            ),
+        ],
+        [
+            ("trigger", ({"playbook": "playbook"}, ["host1"])),
+            ("output", (123, 5, None)),
+        ],
+        [
+            messages.ack("play_id"),
+            messages.playbook_run_update("host1", "play_id", "Exit status: 0", 0),
+            messages.playbook_run_finished(
+                "host1", "play_id", constants.RESULT_SUCCESS
+            ),
+            messages.playbook_run_completed("play_id", constants.RESULT_SUCCESS,),
+        ],
+        FakeLogger()
+        .info("Playbook run play_id running as job invocation 123")
+        .info("Playbook run play_id done")
+        .messages,
+    ),
+]
+
+
+@pytest.fixture(params=START_TEST_CASES)
+def start_scenario(request, base_scenario):
+    # host_id, output_value, result, api_requests, queue_messages = request.param
+
+    yield (base_scenario, request.param)
+
+
+@pytest.mark.asyncio
+async def test_start(start_scenario):
+    run_monitor._RunMonitor__runs = {}
+    base, case = start_scenario
+    queue, logger, satellite_api, run = base
+    (
+        api_responses,
+        expected_api_requests,
+        expected_queue_messages,
+        expected_logger_messages,
+    ) = case
+    satellite_api.responses = api_responses
+    await run.start()
+    assert satellite_api.requests == expected_api_requests
+    assert logger.messages == expected_logger_messages
+    assert queue.messages == expected_queue_messages
