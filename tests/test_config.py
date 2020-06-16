@@ -53,4 +53,4 @@ def test_error_handling(scenario):
     config, expected, warnings, logger = scenario
     validated = Config.validate_input(config, logger)
     assert validated == expected
-    assert logger.warnings == warnings
+    assert logger.warnings() == warnings

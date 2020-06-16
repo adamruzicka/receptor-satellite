@@ -3,7 +3,8 @@ import json
 import logging
 
 from .satellite_api import SatelliteAPI, HEALTH_CHECK_ERROR, HEALTH_STATUS_RESULTS
-from .response_queue import ResponseQueue
+from .response.response_queue import ResponseQueue
+import receptor_satellite.response.constants as constants
 from .run_monitor import run_monitor
 
 
@@ -93,7 +94,7 @@ class Host:
         playbook_run_id = self.run.playbook_run_id
         queue.playbook_run_update(self.name, playbook_run_id, message, self.sequence)
         queue.playbook_run_finished(
-            self.name, playbook_run_id, ResponseQueue.RESULT_FAILURE
+            self.name, playbook_run_id, constants.RESULT_FAILURE
         )
 
     async def polling_loop(self):
@@ -114,11 +115,11 @@ class Host:
                 )
                 self.sequence += 1
             if body["complete"]:
-                result = ResponseQueue.RESULT_FAILURE
+                result = constants.RESULT_FAILURE
                 if last_output.endswith("Exit status: 0"):
-                    result = ResponseQueue.RESULT_SUCCESS
+                    result = constants.RESULT_SUCCESS
                 elif self.run.cancelled:
-                    result = ResponseQueue.RESULT_CANCEL
+                    result = constants.RESULT_CANCEL
                 self.run.queue.playbook_run_finished(
                     self.name, self.run.playbook_run_id, result
                 )
@@ -231,21 +232,21 @@ async def cancel_run(satellite_api, run_id, queue, logger):
     status = None
     if run is True:
         logger.info(f"Playbook run {run_id} is already finished")
-        status = ResponseQueue.CANCEL_RESULT_FINISHED
+        status = constants.CANCEL_RESULT_FINISHED
     elif run is None:
         logger.info(f"Playbook run {run_id} is not known by receptor")
-        status = ResponseQueue.CANCEL_RESULT_FAILURE
+        status = constants.CANCEL_RESULT_FAILURE
     else:
         await satellite_api.init_session()
         response = await satellite_api.cancel(run.job_invocation_id)
         run.cancelled = True
         await satellite_api.close_session()
         if response["status"] == 422:
-            status = ResponseQueue.CANCEL_RESULT_FINISHED
+            status = constants.CANCEL_RESULT_FINISHED
         elif response["status"] == 200:
-            status = ResponseQueue.CANCEL_RESULT_CANCELLING
+            status = constants.CANCEL_RESULT_CANCELLING
         else:
-            status = ResponseQueue.CANCEL_RESULT_FAILURE
+            status = constants.CANCEL_RESULT_FAILURE
     queue.playbook_run_cancel_ack(run_id, status)
 
 

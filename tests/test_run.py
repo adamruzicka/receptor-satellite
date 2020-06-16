@@ -7,33 +7,41 @@ async def _sleep_override(interval):
 
 
 asyncio.sleep = _sleep_override
-
 from receptor_satellite.worker import Host, Run  # noqa: E402
-from receptor_satellite.response_queue import ResponseQueue  # noqa: E402
+from receptor_satellite.response.response_queue import ResponseQueue  # noqa: E402
+import receptor_satellite.response.constants as constants  # noqa: E402
+import receptor_satellite.response.messages as messages  # noqa: E402
 from fake_logger import FakeLogger  # noqa: E402
-
-
-class FakeQueue:
-    def __init__(self):
-        self.messages = []
-
-    def put(self, message):
-        self.messages.append(message)
+from fake_queue import FakeQueue  # noqa: E402
 
 
 class FakeSatelliteAPI:
-    def __init__(self):
+    def __init__(self, responses=[]):
         self.requests = []
+        self.responses = []
 
     def record_request(self, request_type, data):
         self.requests.append((request_type, data))
 
-    def real_output(self, job_id, host_id, since):
-        return {"error": None}
-
     async def output(self, job_id, host_id, since):
+        print(f"{(job_id, host_id, since)}")
         self.record_request("output", (job_id, host_id, since))
-        return self.real_output(job_id, host_id, since)
+        return self.__pop_responses()
+
+    async def trigger(self, inputs, hosts):
+        self.record_request("trigger", (inputs, hosts))
+        return self.__pop_responses()
+
+    async def init_session(self):
+        pass
+
+    async def close_session(self):
+        pass
+
+    def __pop_responses(self):
+        [response, *rest] = self.responses
+        self.responses = rest
+        return response
 
 
 @pytest.fixture
@@ -61,19 +69,8 @@ def test_mark_as_failed(base_scenario):
     host.mark_as_failed("controlled failure")
 
     assert queue.messages == [
-        {
-            "type": "playbook_run_update",
-            "playbook_run_id": "play_id",
-            "sequence": 0,
-            "host": host.name,
-            "console": "controlled failure",
-        },
-        {
-            "type": "playbook_run_finished",
-            "playbook_run_id": "play_id",
-            "host": host.name,
-            "status": ResponseQueue.RESULT_FAILURE,
-        },
+        messages.playbook_run_update(host.name, "play_id", "controlled failure", 0),
+        messages.playbook_run_finished(host.name, "play_id", constants.RESULT_FAILURE),
     ]
 
 
@@ -106,19 +103,10 @@ POLL_WITH_RETRIES_TEST_CASES = [
         api_output={"error": "controlled failure"},
         api_requests=[("output", (None, 1, None)) for _x in range(5)],
         queue_messages=[
-            {
-                "type": "playbook_run_update",
-                "playbook_run_id": "play_id",
-                "sequence": 0,
-                "host": "host1",
-                "console": "controlled failure",
-            },
-            {
-                "type": "playbook_run_finished",
-                "playbook_run_id": "play_id",
-                "host": "host1",
-                "status": ResponseQueue.RESULT_FAILURE,
-            },
+            messages.playbook_run_update("host1", "play_id", "controlled failure", 0),
+            messages.playbook_run_finished(
+                "host1", "play_id", constants.RESULT_FAILURE
+            ),
         ],
     ),
 ]
@@ -138,7 +126,9 @@ def poll_with_retries_scenario(request, base_scenario):
 async def test_poll_with_retries(poll_with_retries_scenario):
     (queue, host, param,) = poll_with_retries_scenario
     satellite_api = host.run.satellite_api
-    satellite_api.real_output = lambda j, h, s: param.api_output
+    satellite_api.responses = [
+        param.api_output for _x in range(len(param.api_requests))
+    ]
 
     result = await host.poll_with_retries()
 
@@ -159,19 +149,12 @@ POLLING_LOOP_TEST_CASES = [
     PollingLoopTestCase(
         host_id=None,
         queue_messages=[
-            {
-                "type": "playbook_run_update",
-                "playbook_run_id": "play_id",
-                "sequence": 0,
-                "host": "host1",
-                "console": "This host is not known by Satellite",
-            },
-            {
-                "type": "playbook_run_finished",
-                "playbook_run_id": "play_id",
-                "host": "host1",
-                "status": ResponseQueue.RESULT_FAILURE,
-            },
+            messages.playbook_run_update(
+                "host1", "play_id", "This host is not known by Satellite", 0
+            ),
+            messages.playbook_run_finished(
+                "host1", "play_id", constants.RESULT_FAILURE
+            ),
         ],
     ),
     # If the polling loop receives an error from the API, it marks the
@@ -180,19 +163,10 @@ POLLING_LOOP_TEST_CASES = [
         api_output={"error": "controlled failure"},
         api_requests=[("output", (None, 1, None)) for _x in range(5)],
         queue_messages=[
-            {
-                "type": "playbook_run_update",
-                "playbook_run_id": "play_id",
-                "sequence": 0,
-                "host": "host1",
-                "console": "controlled failure",
-            },
-            {
-                "type": "playbook_run_finished",
-                "playbook_run_id": "play_id",
-                "host": "host1",
-                "status": ResponseQueue.RESULT_FAILURE,
-            },
+            messages.playbook_run_update("host1", "play_id", "controlled failure", 0),
+            messages.playbook_run_finished(
+                "host1", "play_id", constants.RESULT_FAILURE
+            ),
         ],
     ),
     # If the last output from the API ends with Exit status: 0, mark
@@ -204,19 +178,10 @@ POLLING_LOOP_TEST_CASES = [
         },
         api_requests=[("output", (None, 1, None))],
         queue_messages=[
-            {
-                "type": "playbook_run_update",
-                "playbook_run_id": "play_id",
-                "sequence": 0,
-                "host": "host1",
-                "console": "Exit status: 0",
-            },
-            {
-                "type": "playbook_run_finished",
-                "playbook_run_id": "play_id",
-                "host": "host1",
-                "status": ResponseQueue.RESULT_SUCCESS,
-            },
+            messages.playbook_run_update("host1", "play_id", "Exit status: 0", 0),
+            messages.playbook_run_finished(
+                "host1", "play_id", constants.RESULT_SUCCESS
+            ),
         ],
     ),
     # If the run was cancelled, but the host managed to finish
@@ -229,19 +194,10 @@ POLLING_LOOP_TEST_CASES = [
         },
         api_requests=[("output", (None, 1, None))],
         queue_messages=[
-            {
-                "type": "playbook_run_update",
-                "playbook_run_id": "play_id",
-                "sequence": 0,
-                "host": "host1",
-                "console": "Exit status: 0",
-            },
-            {
-                "type": "playbook_run_finished",
-                "playbook_run_id": "play_id",
-                "host": "host1",
-                "status": ResponseQueue.RESULT_SUCCESS,
-            },
+            messages.playbook_run_update("host1", "play_id", "Exit status: 0", 0),
+            messages.playbook_run_finished(
+                "host1", "play_id", constants.RESULT_SUCCESS
+            ),
         ],
     ),
     # If the host failed, mark it as failed
@@ -252,19 +208,10 @@ POLLING_LOOP_TEST_CASES = [
         },
         api_requests=[("output", (None, 1, None))],
         queue_messages=[
-            {
-                "type": "playbook_run_update",
-                "playbook_run_id": "play_id",
-                "sequence": 0,
-                "host": "host1",
-                "console": "Exit status: 123",
-            },
-            {
-                "type": "playbook_run_finished",
-                "playbook_run_id": "play_id",
-                "host": "host1",
-                "status": ResponseQueue.RESULT_FAILURE,
-            },
+            messages.playbook_run_update("host1", "play_id", "Exit status: 123", 0),
+            messages.playbook_run_finished(
+                "host1", "play_id", constants.RESULT_FAILURE
+            ),
         ],
     ),
     # If the run was cancelled and the run on the host failed, mark it
@@ -277,19 +224,8 @@ POLLING_LOOP_TEST_CASES = [
         },
         api_requests=[("output", (None, 1, None))],
         queue_messages=[
-            {
-                "type": "playbook_run_update",
-                "playbook_run_id": "play_id",
-                "sequence": 0,
-                "host": "host1",
-                "console": "Exit status: 123",
-            },
-            {
-                "type": "playbook_run_finished",
-                "playbook_run_id": "play_id",
-                "host": "host1",
-                "status": ResponseQueue.RESULT_CANCEL,
-            },
+            messages.playbook_run_update("host1", "play_id", "Exit status: 123", 0),
+            messages.playbook_run_finished("host1", "play_id", constants.RESULT_CANCEL),
         ],
     ),
 ]
@@ -308,7 +244,10 @@ def polling_loop_scenario(request, base_scenario):
 async def test_polling_loop(polling_loop_scenario):
     (queue, host, param,) = polling_loop_scenario
     satellite_api = host.run.satellite_api
-    satellite_api.real_output = lambda j, h, s: param.api_output
+    satellite_api.responses = [
+        param.api_output for _x in range(len(param.api_requests))
+    ]
+
     result = await host.polling_loop()
     assert result == param.result
     assert satellite_api.requests == param.api_requests
@@ -332,20 +271,15 @@ def test_hostname_sanity():
         None,  # No need for SatelliteAPI in this test
         logger,
     )
-    assert logger.warnings == ["Hostname 'not,really,good' contains a comma, skipping"]
+    assert logger.warnings() == [
+        "Hostname 'not,really,good' contains a comma, skipping"
+    ]
     assert fake_queue.messages == [
-        {
-            "type": "playbook_run_update",
-            "playbook_run_id": playbook_id,
-            "sequence": 0,
-            "host": "not,really,good",
-            "console": "Hostname contains a comma, skipping",
-        },
-        {
-            "type": "playbook_run_finished",
-            "playbook_run_id": playbook_id,
-            "host": "not,really,good",
-            "status": "failure",
-        },
+        messages.playbook_run_update(
+            "not,really,good", "play_id", "Hostname contains a comma, skipping", 0
+        ),
+        messages.playbook_run_finished(
+            "not,really,good", "play_id", constants.RESULT_FAILURE
+        ),
     ]
     assert list(map(lambda h: h.name, run.hosts)) == ["good", "fine", "ok"]
